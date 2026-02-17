@@ -4,6 +4,8 @@
 
 ## Status
 
+![Tests](https://github.com/HA-AndersenEV/hassio-andersen-ev/actions/workflows/python-app.yml/badge.svg?branch=main)
+
 ### Beta 0.6.4
 
 ## Features
