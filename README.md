@@ -1,10 +1,10 @@
 # Andersen EV Chargepoint integration for Home Assistant
-
 ![Andersen Logo](/images/dark_logo.png)
 
 ## Status
-
 ![Tests](https://github.com/HA-AndersenEV/hassio-andersen-ev/actions/workflows/python-app.yml/badge.svg?branch=main)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/HA-AndersenEV/hassio-andersen-ev)](https://github.com/HA-AndersenEV/hassio-andersen-ev/releases)
 
 ### Beta 0.6.4
 
