@@ -5,9 +5,10 @@ import logging
 import requests
 from . import const
 from .device import KonnectDevice
-from warrant.aws_srp import AWSSRP
+from pycognito.aws_srp import AWSSRP
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class KonnectClient:
     email = None
@@ -39,47 +40,52 @@ class KonnectClient:
         try:
             # Run the AWS SRP authentication in an executor to avoid blocking the event loop
             aws_response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                self.__authenticate_with_aws_srp
+                None, self.__authenticate_with_aws_srp
             )
 
-            aws_result = aws_response['AuthenticationResult']
-            self.token = aws_result['IdToken']
-            self.tokenType = aws_result['TokenType']
-            self.tokenExpiresIn = aws_result['ExpiresIn']
+            aws_result = aws_response["AuthenticationResult"]
+            self.token = aws_result["IdToken"]
+            self.tokenType = aws_result["TokenType"]
+            self.tokenExpiresIn = aws_result["ExpiresIn"]
             # Calculate absolute expiry time (subtract 5 minutes for safety margin)
-            self.tokenExpiryTime = time.time() + aws_result['ExpiresIn'] - 90
-            self.refreshToken = aws_result['RefreshToken']  # Still store for future use if needed
-            
-            _LOGGER.debug("Authentication successful, token will expire in %s seconds", aws_result['ExpiresIn'])
-            
+            self.tokenExpiryTime = time.time() + aws_result["ExpiresIn"] - 90
+            self.refreshToken = aws_result[
+                "RefreshToken"
+            ]  # Still store for future use if needed
+
+            _LOGGER.debug(
+                "Authentication successful, token will expire in %s seconds",
+                aws_result["ExpiresIn"],
+            )
+
         except Exception as e:
             _LOGGER.error("Authentication failed: %s", str(e))
-            raise Exception(f'Failed to sign in: {str(e)}')
+            raise Exception(f"Failed to sign in: {str(e)}")
 
     def __authenticate_with_aws_srp(self):
         # This is executed in the executor pool
         aws_srp = AWSSRP(
-            username = self.username,
-            password = self.password,
-            pool_id = 'eu-west-1_t5HV3bFjl',
-            pool_region = 'eu-west-1',
-            client_id = '23s0olnnniu5472ons0d9uoqt9')
+            username=self.username,
+            password=self.password,
+            pool_id="eu-west-1_t5HV3bFjl",
+            pool_region="eu-west-1",
+            client_id="23s0olnnniu5472ons0d9uoqt9",
+        )
         return aws_srp.authenticate_user()
 
     async def refresh_token(self):
         """Perform a full re-authentication instead of trying to use refresh tokens."""
         _LOGGER.debug("Performing full re-authentication instead of token refresh")
         await self.authenticate_user()
-            
+
     async def is_token_valid(self):
         """Check if the current token is still valid."""
         if not self.token:
             return False
-            
+
         if not self.tokenExpiryTime:
             return False
-            
+
         # Check if token is expired
         return time.time() < self.tokenExpiryTime
 
@@ -89,11 +95,13 @@ class KonnectClient:
         devices = []
 
         url = const.API_DEVICES_URL
-        
+
         # Run blocking requests call in an executor to avoid blocking the event loop
         response = await asyncio.get_event_loop().run_in_executor(
             None,
-            lambda: requests.get(url, headers={"Authorization": f"Bearer {self.token}"})
+            lambda: requests.get(
+                url, headers={"Authorization": f"Bearer {self.token}"}
+            ),
         )
 
         if response.status_code != 200:
@@ -102,51 +110,56 @@ class KonnectClient:
                 _LOGGER.debug("Token expired during getDevices request, refreshing")
                 await self.refresh_token()
                 return await self.getDevices()
-                
-            _LOGGER.error('Failed to get devices. Status Code: %s, Response: %s',
-                        response.status_code, response.text)
+
+            _LOGGER.error(
+                "Failed to get devices. Status Code: %s, Response: %s",
+                response.status_code,
+                response.text,
+            )
             return devices
 
         response_body = response.json()
-        
-        if not response_body.get('devices'):
+
+        if not response_body.get("devices"):
             _LOGGER.warning("No devices found in API response")
             return devices
-            
-        # Debug log number of devices found
-        _LOGGER.debug("Found %s devices", len(response_body['devices']))
 
-        for device in response_body['devices']:
+        # Debug log number of devices found
+        _LOGGER.debug("Found %s devices", len(response_body["devices"]))
+
+        for device in response_body["devices"]:
             # Use "Andersen" as default friendly name if not set or empty
-            friendly_name = device.get('friendlyName') or "Andersen"
-            devices.append(KonnectDevice(
-                api = self,
-                device_id = device['id'],
-                friendly_name = friendly_name,
-                user_lock = device['userLock']))
+            friendly_name = device.get("friendlyName") or "Andersen"
+            devices.append(
+                KonnectDevice(
+                    api=self,
+                    device_id=device["id"],
+                    friendly_name=friendly_name,
+                    user_lock=device["userLock"],
+                )
+            )
 
         return devices
 
     async def __fetchUsername(self):
         url = const.GRAPHQL_USER_MAP_URL
-        body = { 'email': self.email }
-        
+        body = {"email": self.email}
+
         # Run blocking requests call in an executor to avoid blocking the event loop
         response = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: requests.post(url, json=body)
+            None, lambda: requests.post(url, json=body)
         )
 
         if response.status_code != 200:
-            raise Exception('Incorrect email address')
+            raise Exception("Incorrect email address")
 
         # {'error': 'Pending user with email "x" not found'}
         # {'username': 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:x'}
         response_body = response.json()
-        if ('username' not in response_body):
-            raise Exception('Incorrect email address')
+        if "username" not in response_body:
+            raise Exception("Incorrect email address")
 
-        return response_body['username']
+        return response_body["username"]
 
     async def ensure_valid_auth(self):
         """Ensure we have a valid authentication token."""
@@ -154,5 +167,9 @@ class KonnectClient:
             _LOGGER.debug("Token invalid or expired, refreshing")
             await self.refresh_token()
         else:
-            _LOGGER.debug("Token still valid, expiry in %s seconds", 
-                         int(self.tokenExpiryTime - time.time()) if self.tokenExpiryTime else "unknown")
+            _LOGGER.debug(
+                "Token still valid, expiry in %s seconds",
+                int(self.tokenExpiryTime - time.time())
+                if self.tokenExpiryTime
+                else "unknown",
+            )
