@@ -1,3 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["custom_components"]
 asyncio_mode = "auto"
+
+[tool.pylint.main]
+init-hook = "import sys; sys.path.insert(0, 'custom_components')"

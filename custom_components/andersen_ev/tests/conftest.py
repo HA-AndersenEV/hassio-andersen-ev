@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from andersen_ev.konnect.device import KonnectDevice
+
 
 @pytest.fixture
 def event_loop():
@@ -29,10 +31,6 @@ def mock_api():
 @pytest.fixture
 def mock_device(mock_api):  # pylint: disable=redefined-outer-name
     """Create a mock KonnectDevice."""
-    from andersen_ev.konnect.device import (
-        KonnectDevice,  # pylint: disable=import-outside-toplevel
-    )
-
     return KonnectDevice(
         api=mock_api,
         device_id="test_device_123",
