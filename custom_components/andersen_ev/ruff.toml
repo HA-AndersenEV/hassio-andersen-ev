@@ -1,0 +1,17 @@
+[lint]
+select = [
+    "F",       # pyflakes
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "I",       # isort
+    "UP",      # pyupgrade
+    "BLE",     # flake8-blind-except
+    "RUF",     # ruff-specific rules
+    "RET",     # flake8-return
+]
+
+[lint.per-file-ignores]
+"**/tests/**" = [
+    "SLF001",  # Private member access is expected in tests
+    "PLC0415", # In-fixture imports are idiomatic in pytest
+]

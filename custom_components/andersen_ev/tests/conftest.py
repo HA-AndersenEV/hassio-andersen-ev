@@ -29,7 +29,9 @@ def mock_api():
 @pytest.fixture
 def mock_device(mock_api):  # pylint: disable=redefined-outer-name
     """Create a mock KonnectDevice."""
-    from andersen_ev.konnect.device import KonnectDevice  # pylint: disable=import-outside-toplevel
+    from andersen_ev.konnect.device import (
+        KonnectDevice,  # pylint: disable=import-outside-toplevel
+    )
 
     return KonnectDevice(
         api=mock_api,

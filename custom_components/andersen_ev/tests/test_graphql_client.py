@@ -5,9 +5,8 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from gql.transport.exceptions import TransportQueryError, TransportServerError
-
 from andersen_ev.konnect.graphql_client import GraphQLClient
+from gql.transport.exceptions import TransportQueryError, TransportServerError
 
 
 class TestGraphQLClient:
