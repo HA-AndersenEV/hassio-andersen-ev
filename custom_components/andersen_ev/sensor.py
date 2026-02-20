@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import dateutil.parser
-
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -355,7 +354,7 @@ class AndersenEvBaseSensor(CoordinatorEntity, SensorEntity):
 
     async def _update_last_charge(self):
         """Get the last charge data for the device."""
-        self._last_charge = await self._device.getLastCharge()
+        self._last_charge = await self._device.get_last_charge()
 
         # Try to update the model with the latest device status
         if hasattr(self._device, "_last_status"):
@@ -549,7 +548,7 @@ class AndersenEvConnectorSensor(CoordinatorEntity, SensorEntity):
 
             # This will make the connector sensor more responsive
             # by getting the most up-to-date status directly from the API
-            status = await self._device.getDetailedDeviceStatus()
+            status = await self._device.get_detailed_device_status()
             if status and "evseState" in status:
                 evse_state = status["evseState"]
                 if self._last_evse_state != evse_state:
@@ -669,7 +668,7 @@ class AndersenEvChargeStatusSensor(CoordinatorEntity, SensorEntity):
 
             # This will make the sensors more responsive
             # by getting the most up-to-date status directly from the API
-            await self._device.getDetailedDeviceStatus()
+            await self._device.get_detailed_device_status()
         except Exception as err:
             _LOGGER.debug(f"Error updating charge status sensor: {err}")
 
@@ -786,6 +785,6 @@ class AndersenEvLiveSensor(CoordinatorEntity, SensorEntity):
 
             # This will make the sensors more responsive
             # by getting the most up-to-date status directly from the API
-            await self._device.getDetailedDeviceStatus()
+            await self._device.get_detailed_device_status()
         except Exception as err:
             _LOGGER.debug(f"Error updating live detailed status sensor: {err}")
