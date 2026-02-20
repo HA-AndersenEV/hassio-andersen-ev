@@ -76,6 +76,12 @@ class GraphQLClient:  # pylint: disable=too-many-instance-attributes
         self._refresh_task: asyncio.Task | None = None
         self._initial_expiry_time = token_expiry_time
 
+        # Synchronization primitives to serialize connect/reconnect/close and
+        # to track active in-flight requests so reconnect/close waits for them.
+        self._conn_cond: asyncio.Condition = asyncio.Condition()
+        self._active_requests: int = 0
+        self._reconnecting: bool = False
+
     @property
     def token(self) -> str:
         """Return the current bearer token."""
@@ -84,9 +90,19 @@ class GraphQLClient:  # pylint: disable=too-many-instance-attributes
     # -- connection management ---------------------------------------------
 
     async def _ensure_connected(self) -> None:
-        """Lazily create and connect the gql client session."""
-        if self._session is not None:
+        """Lazily create and connect the gql client session (serialized)."""
+        async with self._conn_cond:
+            await self._ensure_connected_locked()
+
+    async def _ensure_connected_locked(self) -> None:
+        """Create and connect the gql client session assuming the connection
+        condition is already held by the caller.
+        """
+        if self._session is not None or self._reconnecting:
             return
+
+        # Create transport and client while holding the lock so multiple
+        # coroutines don't race to create sessions.
         self._transport = AIOHTTPTransport(
             url=self.url,
             headers={"Authorization": f"Bearer {self._token}"},
@@ -95,6 +111,7 @@ class GraphQLClient:  # pylint: disable=too-many-instance-attributes
             transport=self._transport,
             fetch_schema_from_transport=False,
         )
+        # Awaiting connect while holding the condition serializes connect attempts.
         self._session = await self._client.connect_async()
 
         # Schedule proactive refresh on first connect if we know expiry
@@ -103,30 +120,77 @@ class GraphQLClient:  # pylint: disable=too-many-instance-attributes
             self._initial_expiry_time = None
 
     async def _reconnect_with_token(self, token: str) -> None:
-        """Close the current session and reconnect with a new token."""
-        self._token = token
+        """Close the current session and reconnect with a new token.
+
+        This method serializes reconnects and waits for outstanding in-flight
+        requests to finish before closing the current client. While reconnecting
+        new requests will wait until reconnect completes.
+        """
+        # Mark reconnecting and capture token under the connection condition
+        async with self._conn_cond:
+            self._reconnecting = True
+            self._token = token
+            # Wait until no active requests are running
+            while self._active_requests > 0:
+                await self._conn_cond.wait()
+
+        # At this point no requests are active and _reconnecting prevents new ones.
+        # Close existing client outside the lock to avoid blocking other coroutines.
         if self._client is not None:
-            await self._client.close_async()
-        self._transport = AIOHTTPTransport(
+            try:
+                await self._client.close_async()
+            except Exception as err:  # preserve original behavior for close errors
+                _LOGGER.debug("Error closing client during reconnect: %s", err)
+
+        # Create new transport/client and connect
+        new_transport = AIOHTTPTransport(
             url=self.url,
             headers={"Authorization": f"Bearer {self._token}"},
         )
-        self._client = Client(
-            transport=self._transport,
+        new_client = Client(
+            transport=new_transport,
             fetch_schema_from_transport=False,
         )
-        self._session = await self._client.connect_async()
+        new_session = await new_client.connect_async()
+
+        # Swap in the new client/session under the lock and clear reconnecting
+        async with self._conn_cond:
+            self._transport = new_transport
+            self._client = new_client
+            self._session = new_session
+            self._reconnecting = False
+            self._conn_cond.notify_all()
 
     async def close(self) -> None:
-        """Close the client session and cancel any pending refresh timer."""
+        """Close the client session and cancel any pending refresh timer.
+
+        This waits for active requests to finish and serializes the close so
+        nothing replaces the session while closing.
+        """
         if self._refresh_handle is not None:
             self._refresh_handle.cancel()
             self._refresh_handle = None
+
+        # Prevent new requests and wait for in-flight requests to finish
+        async with self._conn_cond:
+            self._reconnecting = True
+            while self._active_requests > 0:
+                await self._conn_cond.wait()
+
+        # Close the client outside the lock
         if self._client is not None:
-            await self._client.close_async()
+            try:
+                await self._client.close_async()
+            except Exception as err:
+                _LOGGER.debug("Error closing client: %s", err)
+
+        # Clear references under the lock and allow others to proceed
+        async with self._conn_cond:
             self._client = None
             self._session = None
             self._transport = None
+            self._reconnecting = False
+            self._conn_cond.notify_all()
 
     # -- execution ---------------------------------------------------------
 
@@ -148,47 +212,91 @@ class GraphQLClient:  # pylint: disable=too-many-instance-attributes
         Returns:
             The ``data`` portion of the response, or *None* on error.
         """
-        await self._ensure_connected()
         document = self._parse_document(query)
 
+        # Track whether this logical request currently holds an active slot.
+        active_counted = False
+
+        # First attempt (may be retried below)
         try:
-            return await self._session.execute(
-                document,
-                variable_values=variables,
-                operation_name=operation_name,
-            )
-        except TransportServerError as err:
-            if err.code == 401:
-                _LOGGER.debug(
-                    "Token expired during %s, refreshing and retrying",
-                    operation_name,
+            # Ensure connected and register this request as active
+            async with self._conn_cond:
+                while self._reconnecting:
+                    await self._conn_cond.wait()
+                await self._ensure_connected_locked()
+                self._active_requests += 1
+                active_counted = True
+
+            try:
+                return await self._session.execute(
+                    document,
+                    variable_values=variables,
+                    operation_name=operation_name,
                 )
-                await self._refresh_and_reconnect()
-                try:
-                    return await self._session.execute(
-                        document,
-                        variable_values=variables,
-                        operation_name=operation_name,
-                    )
-                except (
-                    TransportServerError,
-                    TransportQueryError,
-                    OSError,
-                ) as retry_err:
-                    _LOGGER.error(
-                        "Retry after token refresh failed for %s: %s",
+            except TransportServerError as err:
+                if err.code == 401:
+                    _LOGGER.debug(
+                        "Token expired during %s, refreshing and retrying",
                         operation_name,
-                        retry_err,
                     )
-                    return None
-            _LOGGER.warning("Failed %s, HTTP status code: %s", operation_name, err.code)
-            return None
-        except TransportQueryError as err:
-            _LOGGER.warning("GraphQL errors in %s: %s", operation_name, err.errors)
-            return None
-        except OSError as err:
-            _LOGGER.error("Error executing GraphQL query %s: %s", operation_name, err)
-            return None
+
+                    # Release active slot for the refresh so reconnect can wait for
+                    # zero active requests, and mark we don't hold an active slot.
+                    async with self._conn_cond:
+                        if active_counted:
+                            self._active_requests -= 1
+                            active_counted = False
+                            if self._active_requests == 0:
+                                self._conn_cond.notify_all()
+
+                    # Refresh token and reconnect (this will wait for in-flight
+                    # requests to finish before swapping sessions)
+                    await self._refresh_and_reconnect()
+
+                    # After refresh, try again: ensure connected and re-register
+                    async with self._conn_cond:
+                        while self._reconnecting:
+                            await self._conn_cond.wait()
+                        await self._ensure_connected_locked()
+                        self._active_requests += 1
+                        active_counted = True
+
+                    try:
+                        return await self._session.execute(
+                            document,
+                            variable_values=variables,
+                            operation_name=operation_name,
+                        )
+                    except (
+                        TransportServerError,
+                        TransportQueryError,
+                        OSError,
+                    ) as retry_err:
+                        _LOGGER.error(
+                            "Retry after token refresh failed for %s: %s",
+                            operation_name,
+                            retry_err,
+                        )
+                        return None
+                _LOGGER.warning(
+                    "Failed %s, HTTP status code: %s", operation_name, err.code
+                )
+                return None
+            except TransportQueryError as err:
+                _LOGGER.warning("GraphQL errors in %s: %s", operation_name, err.errors)
+                return None
+            except OSError as err:
+                _LOGGER.error(
+                    "Error executing GraphQL query %s: %s", operation_name, err
+                )
+                return None
+        finally:
+            # Release active slot if still held
+            if active_counted:
+                async with self._conn_cond:
+                    self._active_requests -= 1
+                    if self._active_requests == 0:
+                        self._conn_cond.notify_all()
 
     async def execute_mutation(
         self,

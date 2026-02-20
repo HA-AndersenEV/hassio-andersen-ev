@@ -27,11 +27,18 @@ class KonnectDevice:
         self.user_lock = user_lock
         self._last_status = None
         self.model_name = None
-        self._graphql_client = GraphQLClient(
-            token=api.token,
-            token_refresh=self._refresh_graphql_token,
-            token_expiry_time=getattr(api, "tokenExpiryTime", None),
-        )
+        self._graphql_client = None
+
+    @property
+    def graphql_client(self) -> GraphQLClient:
+        """Lazily create the GraphQL client on first use."""
+        if self._graphql_client is None:
+            self._graphql_client = GraphQLClient(
+                token=self.api.token,
+                token_refresh=self._refresh_graphql_token,
+                token_expiry_time=getattr(self.api, "tokenExpiryTime", None),
+            )
+        return self._graphql_client
 
     async def _refresh_graphql_token(self):
         """Refresh authentication and return new token with expiry time."""
@@ -40,7 +47,8 @@ class KonnectDevice:
 
     async def close(self):
         """Clean up the GraphQL client resources."""
-        await self._graphql_client.close()
+        if self._graphql_client is not None:
+            await self._graphql_client.close()
 
     async def reset_rcm(self):
         """Reset RCM fault on the device."""
@@ -129,7 +137,7 @@ class KonnectDevice:
             self.device_id,
         )
 
-        result = await self._graphql_client.execute_mutation(
+        result = await self.graphql_client.execute_mutation(
             operation_name="setAllSchedulesDisabled",
             mutation=mutation,
             variables={"deviceId": self.device_id},
@@ -149,7 +157,7 @@ class KonnectDevice:
             self.device_id,
         )
 
-        result = await self._graphql_client.execute_mutation(
+        result = await self.graphql_client.execute_mutation(
             operation_name="runAEVCommand",
             mutation=const.GRAPHQL_RUN_COMMAND_QUERY,
             variables={
@@ -166,7 +174,7 @@ class KonnectDevice:
 
     async def get_device_status(self):
         """Get the real-time status of the device."""
-        result = await self._graphql_client.execute_query(
+        result = await self.graphql_client.execute_query(
             operation_name="getDeviceStatusSimple",
             query=const.GRAPHQL_DEVICE_STATUS_QUERY,
             variables={"id": self.device_id},
@@ -229,7 +237,7 @@ class KonnectDevice:
 
     async def get_last_charge(self):
         """Get the last charge session data."""
-        result = await self._graphql_client.execute_query(
+        result = await self.graphql_client.execute_query(
             operation_name="getDeviceCalculatedChargeLogs",
             query=const.GRAPHQL_DEVICE_CHARGE_LOGS_QUERY,
             variables={
@@ -279,7 +287,7 @@ class KonnectDevice:
             self.friendly_name,
         )
 
-        result = await self._graphql_client.execute_query(
+        result = await self.graphql_client.execute_query(
             operation_name="getDevice",
             query=const.GRAPHQL_DEVICE_INFO_QUERY,
             variables={"id": self.device_id},
@@ -307,7 +315,7 @@ class KonnectDevice:
             self.friendly_name,
         )
 
-        result = await self._graphql_client.execute_query(
+        result = await self.graphql_client.execute_query(
             operation_name="getDeviceStatus",
             query=const.GRAPHQL_DEVICE_STATUS_DETAILED_QUERY,
             variables={"id": self.device_id},

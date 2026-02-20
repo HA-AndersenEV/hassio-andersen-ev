@@ -161,6 +161,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    coordinator: AndersenEvCoordinator | None = hass.data[DOMAIN].get(entry.entry_id)
+
+    if coordinator:
+        await asyncio.gather(
+            *(device.close() for device in coordinator.devices), return_exceptions=True
+        )
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
@@ -223,10 +230,45 @@ class AndersenEvCoordinator(DataUpdateCoordinator):
                     return self.devices
 
             # Cache the devices for potential future use
-            self.devices = devices
+            # Reuse existing KonnectDevice objects to preserve their persistent
+            # GraphQL sessions/timers.  Only create new instances for devices
+            # that were not present before, and close devices that disappeared.
+            existing_by_id = {d.device_id: d for d in self.devices}
+            new_by_id = {d.device_id: d for d in devices}
+
+            # Close devices that are no longer reported by the API
+            removed = [d for did, d in existing_by_id.items() if did not in new_by_id]
+            for old_device in removed:
+                _LOGGER.debug(
+                    "Device %s removed, closing resources", old_device.device_id
+                )
+                try:
+                    await old_device.close()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug(
+                        "Error closing removed device %s", old_device.device_id
+                    )
+
+            # Build the refreshed list, reusing existing instances where possible
+            refreshed: list = []
+            for new_dev in devices:
+                if existing := existing_by_id.get(new_dev.device_id):
+                    # Update metadata on the existing device
+                    existing.friendly_name = new_dev.friendly_name
+                    existing.user_lock = new_dev.user_lock
+                    refreshed.append(existing)
+                    # Close the throwaway duplicate we just created
+                    try:
+                        await new_dev.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                else:
+                    refreshed.append(new_dev)
+
+            self.devices = refreshed
 
             # For each device, fetch the current status
-            for device in devices:
+            for device in self.devices:
                 _LOGGER.debug(
                     f"Device ID: {device.device_id}, Name: {device.friendly_name}, User Lock: {device.user_lock}"
                 )
@@ -243,7 +285,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator):
                         f"Error getting device status for {device.friendly_name}: {status_err}"
                     )
 
-            return devices
+            return self.devices
         except ConfigEntryAuthFailed as auth_err:
             # Pass this through to trigger re-authentication
             raise auth_err
