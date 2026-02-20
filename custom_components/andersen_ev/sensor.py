@@ -138,8 +138,8 @@ async def async_setup_entry(
                 "sys_grid_energy_delta",
                 "System Grid Energy Delta",
                 "sysGridEnergyDelta",
-                SensorDeviceClass.POWER,
-                SensorStateClass.MEASUREMENT,
+                SensorDeviceClass.ENERGY,
+                SensorStateClass.TOTAL,
                 UnitOfEnergy.KILO_WATT_HOUR,
                 "mdi:transmission-tower",
             )
