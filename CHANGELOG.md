@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.11.0...v0.12.0) (2026-09-12)
+
+
+### Features
+
+* allow reconfiguring the integration without removing it ([#91](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/91)) ([3efe22b](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/3efe22ba209207fdaa7dfb0ba093096280a8face))
+* classify schedule switches and diagnostic sensors ([#88](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/88)) ([3daeea9](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/3daeea954061e373cd668d7497c0d1dfa71327c7))
+* surface a repair notification if Andersen's API changes unexpectedly ([#92](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/92)) ([0c8d5b8](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/0c8d5b86092743e4b26492588fd85f97b01fe473))
+* translatable entity names, icons, and error messages ([#90](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/90)) ([7dfb000](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/7dfb0001eb5464f3038d4468aad48f1f2fda65bb))
+
+
+### Bug Fixes
+
+* clean up type checking errors and enforce the Typecheck CI check ([#95](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/95)) ([04a190b](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/04a190b04e739c48e1857ce2212b2f4adf0d43c9))
+
 ## [0.11.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.10.0...v0.11.0) (2026-09-05)
 
 
