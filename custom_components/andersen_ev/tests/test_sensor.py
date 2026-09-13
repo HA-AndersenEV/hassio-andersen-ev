@@ -62,12 +62,12 @@ class TestAsyncSetupEntry:
         await async_setup_entry(MagicMock(), entry, async_add_entities)
 
         entities = async_add_entities.call_args.args[0]
-        assert len(entities) == 44
+        assert len(entities) == 56
         assert sum(isinstance(e, AndersenEvEnergySensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvCostSensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvConnectorSensor) for e in entities) == 2
         assert sum(isinstance(e, AndersenEvChargeStatusSensor) for e in entities) == 16
-        assert sum(isinstance(e, AndersenEvLiveSensor) for e in entities) == 10
+        assert sum(isinstance(e, AndersenEvLiveSensor) for e in entities) == 22
 
     @pytest.mark.asyncio
     async def test_no_devices_creates_no_entities(self):
