@@ -59,6 +59,7 @@ class TestDeviceGraphQLCalls:
         assert charge_log is not None
         assert charge_log["chargeEnergyTotal"] == 15.5
         assert charge_log["chargeCostTotal"] == 4.50
+        assert mock_device.last_charge == charge_log
 
     @pytest.mark.asyncio
     async def test_get_last_charge_empty_logs(self, mock_device):
@@ -71,6 +72,20 @@ class TestDeviceGraphQLCalls:
         assert charge_log is None
 
     @pytest.mark.asyncio
+    async def test_get_last_charge_failure_keeps_previous_cached_value(self, mock_device, graphql_charge_logs_response):
+        """A later failed fetch must not clobber the last known-good charge data."""
+        mock_device.graphql_client.execute_query = AsyncMock(return_value=graphql_charge_logs_response)
+        await mock_device.get_last_charge()
+        assert mock_device.last_charge is not None
+
+        mock_device.graphql_client.execute_query = AsyncMock(return_value=None)
+        result = await mock_device.get_last_charge()
+
+        assert result is None
+        assert mock_device.last_charge is not None
+        assert mock_device.last_charge["chargeEnergyTotal"] == 15.5
+
+    @pytest.mark.asyncio
     async def test_get_device_info_success(self, mock_device, graphql_device_info_response):
         """Test successful get_device_info call."""
         mock_device.graphql_client.execute_query = AsyncMock(return_value=graphql_device_info_response)
@@ -80,6 +95,17 @@ class TestDeviceGraphQLCalls:
         assert device_info is not None
         assert device_info["name"] == "Andersen A2"
         assert device_info["id"] == "device_123"
+        assert mock_device.currency == "GBP"
+
+    @pytest.mark.asyncio
+    async def test_get_device_info_missing_currency_leaves_it_unset(self, mock_device, graphql_device_info_response):
+        """Test get_device_info doesn't overwrite currency when deviceInfo lacks it."""
+        del graphql_device_info_response["getDevice"]["deviceInfo"]["currency"]
+        mock_device.graphql_client.execute_query = AsyncMock(return_value=graphql_device_info_response)
+
+        await mock_device.get_device_info()
+
+        assert mock_device.currency is None
 
     @pytest.mark.asyncio
     async def test_enable_charging(self, mock_device, graphql_command_success_response):

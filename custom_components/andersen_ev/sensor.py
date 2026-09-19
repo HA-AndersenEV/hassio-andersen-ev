@@ -308,36 +308,13 @@ class AndersenEvBaseSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
             model="A2",
             serial_number=f"{device.device_id}",
         )
-        self._last_charge = None
         self._update_model_from_device_status()
-
-    async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        # Update last charge data
-        await self._update_last_charge()
-
-    async def _update_last_charge(self):
-        """Get the last charge data for the device."""
-        self._last_charge = await self._device.get_last_charge()
-
-        # Try to update the model with the latest device status
-        if self._device.last_status:
-            self._update_model_from_device_status()
-
-    async def async_update(self):
-        """Update the entity.
-
-        Only used by the generic entity update service.
-        """
-        await super().async_update()
-        await self._update_last_charge()
 
     @property
     def available(self) -> bool:
         """Return if the sensor is available."""
         # We need to override this because the last charge might be None
-        return self.coordinator.last_update_success and self._last_charge is not None
+        return self.coordinator.last_update_success and self._device.last_charge is not None
 
 
 class AndersenEvEnergySensor(AndersenEvBaseSensor):
@@ -354,8 +331,9 @@ class AndersenEvEnergySensor(AndersenEvBaseSensor):
     @property
     def native_value(self) -> float | None:
         """Return the energy value."""
-        if self._last_charge and self._data_key in self._last_charge:
-            return self._last_charge[self._data_key]
+        last_charge = self._device.last_charge
+        if last_charge and self._data_key in last_charge:
+            return last_charge[self._data_key]
         return None
 
 
@@ -364,18 +342,29 @@ class AndersenEvCostSensor(AndersenEvBaseSensor):
 
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
-    # Assuming GBP - you could make this configurable
-    _attr_native_unit_of_measurement = "GBP"
 
     def __init__(self, coordinator: AndersenEvCoordinator, device, sensor_type, data_key) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, device, sensor_type, data_key)
 
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        # Fetch the account's currency once; it isn't part of the regular status poll.
+        if self._device.currency is None:
+            await self._device.get_device_info()
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        """Return the currency, falling back to GBP until it's known."""
+        return self._device.currency or "GBP"
+
     @property
     def native_value(self) -> float | None:
         """Return the cost value."""
-        if self._last_charge and self._data_key in self._last_charge:
-            return self._last_charge[self._data_key]
+        last_charge = self._device.last_charge
+        if last_charge and self._data_key in last_charge:
+            return last_charge[self._data_key]
         return None
 
 
