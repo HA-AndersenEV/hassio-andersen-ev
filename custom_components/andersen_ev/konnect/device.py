@@ -22,7 +22,9 @@ class KonnectDevice:
     friendly_name: str
     user_lock: bool = False
     _last_status: dict[str, Any] | None = None
+    _last_charge: dict[str, Any] | None = None
     model_name: str | None = None
+    currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
 
     def __init__(self, api, device_id, friendly_name, user_lock):
@@ -32,7 +34,9 @@ class KonnectDevice:
         self.friendly_name = friendly_name
         self.user_lock = user_lock
         self._last_status = None
+        self._last_charge = None
         self.model_name = None
+        self.currency = None
         self._graphql_client = None
         self.status_available = True
 
@@ -40,6 +44,11 @@ class KonnectDevice:
     def last_status(self):
         """Return the last known device status."""
         return self._last_status
+
+    @property
+    def last_charge(self):
+        """Return the last known charge session data."""
+        return self._last_charge
 
     @property
     def graphql_client(self) -> GraphQLClient:
@@ -220,7 +229,7 @@ class KonnectDevice:
             return None
 
         latest_log = device_logs[0]
-        return {
+        self._last_charge = {
             "duration": latest_log["duration"],
             "chargeCostTotal": latest_log["chargeCostTotal"],
             "chargeEnergyTotal": latest_log["chargeEnergyTotal"],
@@ -231,6 +240,7 @@ class KonnectDevice:
             "surplusUsedCostTotal": latest_log["surplusUsedCostTotal"],
             "surplusUsedEnergyTotal": latest_log["surplusUsedEnergyTotal"],
         }
+        return self._last_charge
 
     async def get_solar(self) -> dict | None:
         """Get the current solar charging settings from the device.
@@ -307,5 +317,8 @@ class KonnectDevice:
             return None
 
         device_info = result["getDevice"]
+        currency = (device_info.get("deviceInfo") or {}).get("currency")
+        if currency:
+            self.currency = currency
         _LOGGER.debug("Successfully retrieved device info for %s", self.friendly_name)
         return device_info

@@ -45,6 +45,7 @@ def _make_device(device_id="device_1", friendly_name="Device", user_lock=False):
     device.user_lock = user_lock
     device.status_available = None
     device.get_detailed_device_status = AsyncMock(return_value={"online": True})
+    device.get_last_charge = AsyncMock(return_value={"chargeEnergyTotal": 1.0})
     device.disable_all_schedules = AsyncMock()
     device.reset_rcm = AsyncMock()
     device.get_device_info = AsyncMock(return_value={"info": "data"})
@@ -104,6 +105,7 @@ class TestAsyncUpdateData:
 
         assert result == [device]
         device.get_detailed_device_status.assert_awaited_once()
+        device.get_last_charge.assert_awaited_once()
         assert device.status_available is True
         assert coordinator._device_availability[device.device_id] is True
 
@@ -249,6 +251,7 @@ class TestAsyncUpdateData:
 
         assert device.status_available is False
         assert coordinator._device_availability[device.device_id] is False
+        device.get_last_charge.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_status_none_marks_device_unavailable(self):
@@ -262,6 +265,22 @@ class TestAsyncUpdateData:
 
         assert device.status_available is False
         assert coordinator._device_availability[device.device_id] is False
+        device.get_last_charge.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_last_charge_fetch_exception_does_not_mark_device_unavailable(self):
+        """A failure fetching charge logs is independent of the primary status fetch."""
+        device = _make_device()
+        device.get_last_charge = AsyncMock(side_effect=Exception("boom"))
+        client = MagicMock()
+        client.getDevices = AsyncMock(return_value=[device])
+        coordinator = _make_coordinator(client)
+
+        result = await coordinator._async_update_data()
+
+        assert result == [device]
+        assert device.status_available is True
+        assert coordinator._device_availability[device.device_id] is True
 
     @pytest.mark.asyncio
     async def test_device_recovery_logs_info(self):
