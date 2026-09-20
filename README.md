@@ -128,9 +128,10 @@ only marked unavailable once polling has failed for a device with no prior cache
   instance) aren't supported side by side.
 * **Fully cloud-dependent.** There's no local fallback - if Andersen's API or cloud is down, data
   stops updating and lock/schedule/service actions will fail until it recovers.
-* **Cost sensors assume GBP.** The cost sensors (`cost`, `grid_cost`, `solar_cost`,
-  `surplus_cost`) report in GBP; there's currently no way to change the currency unit if your
-  Andersen account uses a different one.
+* **Cost sensors use the charger's own currency.** The cost sensors (`cost`, `grid_cost`,
+  `solar_cost`, `surplus_cost`) report in whatever currency Andersen has configured for your
+  charger. That can't be overridden from Home Assistant, so it won't follow your Home Assistant
+  currency setting if the two differ.
 * **Grid power sensors are a workaround, not a replacement for a smart meter integration.** They're
   intended for those without a smart meter connected to Home Assistant already (see
   [Features](#features)) - accuracy depends entirely on what the charger itself reports.
