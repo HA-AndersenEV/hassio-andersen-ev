@@ -124,6 +124,10 @@ def graphql_device_info_response():
                 "evseFwVersion": "2.0",
                 "evseHwVersion": "2.1",
             },
+            "deviceInfo": {
+                "currency": "GBP",
+                "friendlyName": "Test Device",
+            },
         }
     }
 

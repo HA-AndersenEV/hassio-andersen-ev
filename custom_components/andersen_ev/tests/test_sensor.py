@@ -25,6 +25,7 @@ def _make_device(
     last_status=None,
     model_name=None,
     last_charge=None,
+    currency=None,
 ):
     """Build a mock KonnectDevice."""
     device = MagicMock()
@@ -32,9 +33,12 @@ def _make_device(
     device.friendly_name = friendly_name
     device.status_available = status_available
     device.last_status = last_status
+    device.last_charge = last_charge
     device.model_name = model_name
+    device.currency = currency
     device.get_last_charge = AsyncMock(return_value=last_charge)
     device.get_detailed_device_status = AsyncMock(return_value=last_status)
+    device.get_device_info = AsyncMock(return_value=None)
     return device
 
 
@@ -212,139 +216,138 @@ class TestBaseSensorAvailable:
     """Tests for AndersenEvBaseSensor.available."""
 
     def test_available_when_update_success_and_last_charge_present(self):
-        device = _make_device()
+        device = _make_device(last_charge={"chargeEnergyTotal": 1.0})
         coordinator = _make_coordinator([device], last_update_success=True)
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._last_charge = {"chargeEnergyTotal": 1.0}
 
         assert sensor.available is True
 
     def test_unavailable_when_last_charge_none(self):
-        device = _make_device()
+        device = _make_device(last_charge=None)
         coordinator = _make_coordinator([device], last_update_success=True)
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._last_charge = None
 
         assert sensor.available is False
 
     def test_unavailable_when_coordinator_update_failed(self):
-        device = _make_device()
+        device = _make_device(last_charge={"chargeEnergyTotal": 1.0})
         coordinator = _make_coordinator([device], last_update_success=False)
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._last_charge = {"chargeEnergyTotal": 1.0}
 
         assert sensor.available is False
-
-
-class TestBaseSensorAsyncAddedToHass:
-    """Tests for AndersenEvBaseSensor.async_added_to_hass()."""
-
-    @pytest.mark.asyncio
-    async def test_updates_last_charge(self):
-        device = _make_device()
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._update_last_charge = AsyncMock()
-
-        await sensor.async_added_to_hass()
-
-        sensor._update_last_charge.assert_awaited_once()
-
-
-class TestBaseSensorAsyncUpdate:
-    """Tests for AndersenEvBaseSensor.async_update()."""
-
-    @pytest.mark.asyncio
-    async def test_updates_last_charge(self):
-        device = _make_device()
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._update_last_charge = AsyncMock()
-
-        await sensor.async_update()
-
-        sensor._update_last_charge.assert_awaited_once()
-
-
-class TestUpdateLastCharge:
-    """Tests for AndersenEvBaseSensor._update_last_charge()."""
-
-    @pytest.mark.asyncio
-    async def test_fetches_last_charge_and_updates_model(self):
-        device = _make_device(last_status={"sysProductName": "Andersen A2 Pro"}, last_charge={"chargeEnergyTotal": 5})
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-
-        await sensor._update_last_charge()
-
-        assert sensor._last_charge == {"chargeEnergyTotal": 5}
-        assert sensor._attr_device_info["model"] == "Andersen A2 Pro"
-
-    @pytest.mark.asyncio
-    async def test_no_status_skips_model_update(self):
-        device = _make_device(last_status=None, last_charge={"chargeEnergyTotal": 5})
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-
-        await sensor._update_last_charge()
-
-        assert sensor._last_charge == {"chargeEnergyTotal": 5}
 
 
 class TestEnergySensorNativeValue:
     """Tests for AndersenEvEnergySensor.native_value."""
 
     def test_returns_value_from_last_charge(self):
-        device = _make_device()
+        device = _make_device(last_charge={"chargeEnergyTotal": 15.5})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._last_charge = {"chargeEnergyTotal": 15.5}
 
         assert sensor.native_value == 15.5
 
     def test_returns_none_when_key_missing(self):
-        device = _make_device()
+        device = _make_device(last_charge={"other": 1})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._last_charge = {"other": 1}
 
         assert sensor.native_value is None
 
     def test_returns_none_when_no_last_charge(self):
-        device = _make_device()
+        device = _make_device(last_charge=None)
         coordinator = _make_coordinator([device])
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-        sensor._last_charge = None
 
         assert sensor.native_value is None
+
+    def test_reflects_device_last_charge_updated_after_construction(self):
+        """native_value must read live, not a snapshot taken at __init__."""
+        device = _make_device(last_charge=None)
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
+        assert sensor.native_value is None
+
+        device.last_charge = {"chargeEnergyTotal": 42.0}
+
+        assert sensor.native_value == 42.0
 
 
 class TestCostSensorNativeValue:
     """Tests for AndersenEvCostSensor.native_value."""
 
     def test_returns_value_from_last_charge(self):
-        device = _make_device()
+        device = _make_device(last_charge={"chargeCostTotal": 4.5})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
-        sensor._last_charge = {"chargeCostTotal": 4.5}
 
         assert sensor.native_value == 4.5
 
     def test_returns_none_when_key_missing(self):
-        device = _make_device()
+        device = _make_device(last_charge={"other": 1})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
-        sensor._last_charge = {"other": 1}
 
         assert sensor.native_value is None
 
     def test_returns_none_when_no_last_charge(self):
-        device = _make_device()
+        device = _make_device(last_charge=None)
         coordinator = _make_coordinator([device])
         sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
-        sensor._last_charge = None
 
         assert sensor.native_value is None
+
+
+class TestCostSensorCurrency:
+    """Tests for AndersenEvCostSensor currency handling."""
+
+    def test_native_unit_of_measurement_uses_device_currency(self):
+        device = _make_device(currency="EUR")
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
+
+        assert sensor.native_unit_of_measurement == "EUR"
+
+    def test_native_unit_of_measurement_defaults_to_gbp_when_unknown(self):
+        device = _make_device(currency=None)
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
+
+        assert sensor.native_unit_of_measurement == "GBP"
+
+    @pytest.mark.asyncio
+    async def test_async_added_to_hass_fetches_currency_when_unknown(self):
+        device = _make_device(currency=None)
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
+
+        await sensor.async_added_to_hass()
+
+        device.get_device_info.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_async_added_to_hass_skips_fetch_when_currency_known(self):
+        device = _make_device(currency="EUR")
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
+
+        await sensor.async_added_to_hass()
+
+        device.get_device_info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unit_reflects_fetched_currency_after_added_to_hass(self, mock_device, graphql_device_info_response):
+        """End-to-end: a real KonnectDevice.get_device_info() call actually changes the reported unit."""
+        graphql_device_info_response["getDevice"]["deviceInfo"]["currency"] = "USD"
+        mock_device.graphql_client.execute_query = AsyncMock(return_value=graphql_device_info_response)
+        coordinator = _make_coordinator([mock_device])
+        sensor = AndersenEvCostSensor(coordinator, mock_device, "cost", "chargeCostTotal")
+
+        assert sensor.native_unit_of_measurement == "GBP"
+
+        await sensor.async_added_to_hass()
+
+        assert sensor.native_unit_of_measurement == "USD"
 
 
 class TestConnectorSensorInit:

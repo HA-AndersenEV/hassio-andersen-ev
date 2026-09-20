@@ -278,6 +278,11 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 _LOGGER.info("Device %s is back online", device.friendly_name)
             self._device_availability[device.device_id] = True
 
+            try:
+                await device.get_last_charge()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Failed to fetch last charge for %s: %s", device.friendly_name, err)
+
         return self.devices
 
     def _mark_device_unavailable(self, device, error) -> None:
