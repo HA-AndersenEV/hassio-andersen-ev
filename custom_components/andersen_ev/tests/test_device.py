@@ -59,7 +59,20 @@ class TestDeviceGraphQLCalls:
         assert charge_log is not None
         assert charge_log["chargeEnergyTotal"] == 15.5
         assert charge_log["chargeCostTotal"] == 4.50
+        assert charge_log["startDateTimeLocal"] == "2024-02-19T10:30:00"
         assert mock_device.last_charge == charge_log
+
+    @pytest.mark.asyncio
+    async def test_get_last_charge_missing_start(self, mock_device, graphql_charge_logs_response):
+        """startDateTimeLocal missing from the API response must not raise."""
+        log = graphql_charge_logs_response["getDevice"]["deviceCalculatedChargeLogs"][0]
+        del log["startDateTimeLocal"]
+        mock_device.graphql_client.execute_query = AsyncMock(return_value=graphql_charge_logs_response)
+
+        charge_log = await mock_device.get_last_charge()
+
+        assert charge_log is not None
+        assert charge_log["startDateTimeLocal"] is None
 
     @pytest.mark.asyncio
     async def test_get_last_charge_empty_logs(self, mock_device):

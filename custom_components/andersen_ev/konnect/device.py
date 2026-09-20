@@ -239,6 +239,7 @@ class KonnectDevice:
             "solarCostTotal": latest_log["solarCostTotal"],
             "surplusUsedCostTotal": latest_log["surplusUsedCostTotal"],
             "surplusUsedEnergyTotal": latest_log["surplusUsedEnergyTotal"],
+            "startDateTimeLocal": latest_log.get("startDateTimeLocal"),
         }
         return self._last_charge
 

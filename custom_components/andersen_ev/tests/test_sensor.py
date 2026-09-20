@@ -1,11 +1,13 @@
 """Tests for the Andersen EV sensor platform."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from andersen_ev.sensor import (
     AndersenEvChargeStatusSensor,
@@ -237,6 +239,54 @@ class TestBaseSensorAvailable:
         assert sensor.available is False
 
 
+class TestBaseSensorLastReset:
+    """Tests for AndersenEvBaseSensor.last_reset."""
+
+    def test_keeps_session_start_wall_clock_in_the_ha_timezone(self):
+        """The API sends a naive local time, so the wall clock must survive the conversion.
+
+        Pinned against a non-UTC zone deliberately: with the timezone left at UTC this
+        assertion would also pass if the naive value were wrongly treated as UTC.
+        """
+        original_tz = dt_util.DEFAULT_TIME_ZONE
+        dt_util.set_default_time_zone(dt_util.get_time_zone("America/New_York"))
+        try:
+            device = _make_device(last_charge={"startDateTimeLocal": "2024-02-19T10:30:00"})
+            coordinator = _make_coordinator([device])
+            sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
+
+            last_reset = sensor.last_reset
+
+            assert last_reset is not None
+            assert last_reset.tzinfo is not None
+            assert last_reset.utcoffset() == timedelta(hours=-5)
+            assert (last_reset.year, last_reset.month, last_reset.day) == (2024, 2, 19)
+            assert (last_reset.hour, last_reset.minute) == (10, 30)
+        finally:
+            dt_util.set_default_time_zone(original_tz)
+
+    def test_returns_none_when_no_last_charge(self):
+        device = _make_device(last_charge=None)
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
+
+        assert sensor.last_reset is None
+
+    def test_returns_none_when_key_missing(self):
+        device = _make_device(last_charge={"chargeEnergyTotal": 15.5})
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
+
+        assert sensor.last_reset is None
+
+    def test_returns_none_when_unparseable(self):
+        device = _make_device(last_charge={"startDateTimeLocal": "not-a-date"})
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
+
+        assert sensor.last_reset is None
+
+
 class TestEnergySensorNativeValue:
     """Tests for AndersenEvEnergySensor.native_value."""
 
@@ -296,6 +346,16 @@ class TestCostSensorNativeValue:
         sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
 
         assert sensor.native_value is None
+
+    def test_exposes_last_reset_from_session_start(self):
+        device = _make_device(last_charge={"chargeCostTotal": 4.5, "startDateTimeLocal": "2024-02-19T10:30:00"})
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvCostSensor(coordinator, device, "cost", "chargeCostTotal")
+
+        last_reset = sensor.last_reset
+
+        assert last_reset is not None
+        assert last_reset.tzinfo is not None
 
 
 class TestCostSensorCurrency:
@@ -1035,4 +1095,4 @@ class TestEnergySensorUnitConstants:
 
         assert sensor._attr_native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
         assert sensor._attr_device_class == SensorDeviceClass.ENERGY
-        assert sensor._attr_state_class == SensorStateClass.TOTAL_INCREASING
+        assert sensor._attr_state_class == SensorStateClass.TOTAL
