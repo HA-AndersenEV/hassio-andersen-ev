@@ -1,6 +1,6 @@
 -r requirements.txt
 homeassistant==2026.8.3
-ruff==0.16.6
+ruff==0.16.8
 pytest
 pytest-asyncio
 pytest-cov
