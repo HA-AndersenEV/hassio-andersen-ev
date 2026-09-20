@@ -44,17 +44,20 @@ def graphql_device_status_response():
     """Sample GraphQL response for device status (unwrapped by GraphQLClient)."""
     return {
         "getDevice": {
-            "name": "Andersen A2",
+            "name": "1234567890",
             "deviceStatus": {
                 "id": "device_123",
+                "konnectSerial": "1234567890",
                 "online": True,
                 "evseState": "3",
                 "sysChargingEnabled": True,
                 "sysUserLock": False,
                 "sysScheduleLock": False,
-                "sysProductName": "Andersen A2",
-                "sysProductId": "A2",
-                "sysHwVersion": "1.0",
+                "sysProductName": "Thurlestone",
+                "sysProductId": 30,
+                "sysHwVersion": "4",
+                "sysFwVersion": "314",
+                "evseFwVersion": "5.22",
                 "evseHwVersion": "2.0",
                 "chargeStatus": {
                     "start": "2024-02-19T10:30:00Z",

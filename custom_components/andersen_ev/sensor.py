@@ -307,10 +307,9 @@ class AndersenEvBaseSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
             identifiers={(DOMAIN, device.device_id)},
             name=f"{device.friendly_name} ({device.device_id})",
             manufacturer="Andersen EV",
-            model="A2",
             serial_number=f"{device.device_id}",
         )
-        self._update_model_from_device_status()
+        self._update_device_info_from_status()
 
     @property
     def available(self) -> bool:
@@ -420,10 +419,9 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
             identifiers={(DOMAIN, device.device_id)},
             name=f"{device.friendly_name} ({device.device_id})",
             manufacturer="Andersen EV",
-            model="A2",
             serial_number=f"{device.device_id}",
         )
-        self._update_model_from_device_status()
+        self._update_device_info_from_status()
         self._connector_state = "unknown"
         self._last_evse_state = None
 
@@ -489,7 +487,7 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
         # Force refresh of device status to get the latest evseState
         try:
             # Update model if device status is available
-            self._update_model_from_device_status()
+            self._update_device_info_from_status()
 
             # This will make the connector sensor more responsive
             # by getting the most up-to-date status directly from the API
@@ -531,7 +529,6 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
             identifiers={(DOMAIN, device.device_id)},
             name=f"{device.friendly_name} ({device.device_id})",
             manufacturer="Andersen EV",
-            model="A2",
             serial_number=f"{device.device_id}",
         )
         if device_class:
@@ -540,7 +537,7 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
             self._attr_state_class = state_class
         if unit:
             self._attr_native_unit_of_measurement = unit
-        self._update_model_from_device_status()
+        self._update_device_info_from_status()
 
     @property
     def available(self) -> bool:
@@ -586,7 +583,7 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
         # Force refresh of device status to get the latest data
         try:
             # Update model if device status is available
-            self._update_model_from_device_status()
+            self._update_device_info_from_status()
 
             # This will make the sensors more responsive
             # by getting the most up-to-date status directly from the API
@@ -623,7 +620,6 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
             identifiers={(DOMAIN, device.device_id)},
             name=f"{device.friendly_name} ({device.device_id})",
             manufacturer="Andersen EV",
-            model="A2",
             serial_number=f"{device.device_id}",
         )
         if device_class:
@@ -635,7 +631,7 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         if entity_category is not None:
             self._attr_entity_category = entity_category
         self._attr_entity_registry_enabled_default = enabled_default
-        self._update_model_from_device_status()
+        self._update_device_info_from_status()
 
     @property
     def available(self) -> bool:
@@ -682,7 +678,7 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         # Force refresh of device status to get the latest data
         try:
             # Update model if device status is available
-            self._update_model_from_device_status()
+            self._update_device_info_from_status()
 
             # This will make the sensors more responsive
             # by getting the most up-to-date status directly from the API

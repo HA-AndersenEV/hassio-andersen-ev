@@ -25,7 +25,6 @@ def _make_device(
     friendly_name="Device",
     status_available=True,
     last_status=None,
-    model_name=None,
     last_charge=None,
     currency=None,
 ):
@@ -36,7 +35,6 @@ def _make_device(
     device.status_available = status_available
     device.last_status = last_status
     device.last_charge = last_charge
-    device.model_name = model_name
     device.currency = currency
     device.get_last_charge = AsyncMock(return_value=last_charge)
     device.get_detailed_device_status = AsyncMock(return_value=last_status)
@@ -170,48 +168,45 @@ class TestBaseSensorInit:
         assert sensor._attr_has_entity_name is True
 
 
-class TestBaseSensorUpdateModelFromDeviceStatus:
-    """Tests for AndersenEvBaseSensor._update_model_from_device_status()."""
+class TestBaseSensorUpdateDeviceInfoFromStatus:
+    """Tests for AndersenEvBaseSensor._update_device_info_from_status()."""
 
-    def test_uses_model_name_when_present(self):
-        device = _make_device(model_name="Andersen A3")
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-
-        assert sensor._attr_device_info["model"] == "Andersen A3"
-
-    def test_falls_back_to_sys_product_name(self):
-        device = _make_device(last_status={"sysProductName": "Andersen A2 Pro"})
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
-
-        assert sensor._attr_device_info["model"] == "Andersen A2 Pro"
-
-    def test_falls_back_to_sys_product_id(self):
-        device = _make_device(last_status={"sysProductId": "A2"})
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
+        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
 
         assert sensor._attr_device_info["model"] == "A2"
 
-    def test_falls_back_to_hw_version(self):
-        device = _make_device(last_status={"sysHwVersion": "1.5"})
+    def test_integer_product_id_rendered_as_string(self):
+        device = _make_device(last_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
 
-        assert sensor._attr_device_info["model"] == "A2 (HW: 1.5)"
+        assert sensor._attr_device_info["model"] == "99"
 
-    def test_no_status_keeps_default_model(self):
+    def test_hw_fw_and_serial_populated(self):
+        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        coordinator = _make_coordinator([device])
+
+        sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
+
+        assert sensor._attr_device_info["hw_version"] == "4"
+        assert sensor._attr_device_info["sw_version"] == "314"
+        assert sensor._attr_device_info["serial_number"] == "1234567890"
+
+    def test_no_status_keeps_default_device_info(self):
         device = _make_device(last_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
 
-        assert sensor._attr_device_info["model"] == "A2"
+        assert "model" not in sensor._attr_device_info
+        assert "hw_version" not in sensor._attr_device_info
+        assert "sw_version" not in sensor._attr_device_info
+        assert sensor._attr_device_info["serial_number"] == device.device_id
 
 
 class TestBaseSensorAvailable:
@@ -422,48 +417,45 @@ class TestConnectorSensorInit:
         assert sensor._attr_translation_key == "connector"
 
 
-class TestConnectorSensorUpdateModelFromDeviceStatus:
-    """Tests for AndersenEvConnectorSensor._update_model_from_device_status()."""
+class TestConnectorSensorUpdateDeviceInfoFromStatus:
+    """Tests for AndersenEvConnectorSensor._update_device_info_from_status()."""
 
-    def test_uses_model_name_when_present(self):
-        device = _make_device(model_name="Andersen A3")
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvConnectorSensor(coordinator, device)
-
-        assert sensor._attr_device_info["model"] == "Andersen A3"
-
-    def test_falls_back_to_sys_product_name(self):
-        device = _make_device(last_status={"sysProductName": "Andersen A2 Pro"})
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvConnectorSensor(coordinator, device)
-
-        assert sensor._attr_device_info["model"] == "Andersen A2 Pro"
-
-    def test_falls_back_to_sys_product_id(self):
-        device = _make_device(last_status={"sysProductId": "A2"})
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
+        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
         assert sensor._attr_device_info["model"] == "A2"
 
-    def test_falls_back_to_hw_version(self):
-        device = _make_device(last_status={"sysHwVersion": "1.5"})
+    def test_integer_product_id_rendered_as_string(self):
+        device = _make_device(last_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
-        assert sensor._attr_device_info["model"] == "A2 (HW: 1.5)"
+        assert sensor._attr_device_info["model"] == "99"
 
-    def test_no_status_keeps_default_model(self):
+    def test_hw_fw_and_serial_populated(self):
+        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        coordinator = _make_coordinator([device])
+
+        sensor = AndersenEvConnectorSensor(coordinator, device)
+
+        assert sensor._attr_device_info["hw_version"] == "4"
+        assert sensor._attr_device_info["sw_version"] == "314"
+        assert sensor._attr_device_info["serial_number"] == "1234567890"
+
+    def test_no_status_keeps_default_device_info(self):
         device = _make_device(last_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
-        assert sensor._attr_device_info["model"] == "A2"
+        assert "model" not in sensor._attr_device_info
+        assert "hw_version" not in sensor._attr_device_info
+        assert "sw_version" not in sensor._attr_device_info
+        assert sensor._attr_device_info["serial_number"] == device.device_id
 
 
 class TestConnectorSensorAvailable:
@@ -620,48 +612,45 @@ class TestChargeStatusSensorInit:
         assert sensor._attr_unique_id == f"{device.device_id}_charge_power"
 
 
-class TestChargeStatusSensorUpdateModelFromDeviceStatus:
-    """Tests for AndersenEvChargeStatusSensor._update_model_from_device_status()."""
+class TestChargeStatusSensorUpdateDeviceInfoFromStatus:
+    """Tests for AndersenEvChargeStatusSensor._update_device_info_from_status()."""
 
-    def test_uses_model_name_when_present(self):
-        device = _make_device(model_name="Andersen A3")
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
-
-        assert sensor._attr_device_info["model"] == "Andersen A3"
-
-    def test_falls_back_to_sys_product_name(self):
-        device = _make_device(last_status={"sysProductName": "Andersen A2 Pro"})
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
-
-        assert sensor._attr_device_info["model"] == "Andersen A2 Pro"
-
-    def test_falls_back_to_sys_product_id(self):
-        device = _make_device(last_status={"sysProductId": "A2"})
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
+        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
 
         assert sensor._attr_device_info["model"] == "A2"
 
-    def test_falls_back_to_hw_version(self):
-        device = _make_device(last_status={"sysHwVersion": "1.5"})
+    def test_integer_product_id_rendered_as_string(self):
+        device = _make_device(last_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
 
-        assert sensor._attr_device_info["model"] == "A2 (HW: 1.5)"
+        assert sensor._attr_device_info["model"] == "99"
 
-    def test_no_status_keeps_default_model(self):
+    def test_hw_fw_and_serial_populated(self):
+        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        coordinator = _make_coordinator([device])
+
+        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
+
+        assert sensor._attr_device_info["hw_version"] == "4"
+        assert sensor._attr_device_info["sw_version"] == "314"
+        assert sensor._attr_device_info["serial_number"] == "1234567890"
+
+    def test_no_status_keeps_default_device_info(self):
         device = _make_device(last_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
 
-        assert sensor._attr_device_info["model"] == "A2"
+        assert "model" not in sensor._attr_device_info
+        assert "hw_version" not in sensor._attr_device_info
+        assert "sw_version" not in sensor._attr_device_info
+        assert sensor._attr_device_info["serial_number"] == device.device_id
 
 
 class TestChargeStatusSensorAvailable:
@@ -820,48 +809,45 @@ class TestChargeStatusSensorAsyncUpdate:
         await sensor.async_update()
 
 
-class TestLiveSensorUpdateModelFromDeviceStatus:
-    """Tests for AndersenEvLiveSensor._update_model_from_device_status()."""
+class TestLiveSensorUpdateDeviceInfoFromStatus:
+    """Tests for AndersenEvLiveSensor._update_device_info_from_status()."""
 
-    def test_uses_model_name_when_present(self):
-        device = _make_device(model_name="Andersen A3")
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
-
-        assert sensor._attr_device_info["model"] == "Andersen A3"
-
-    def test_falls_back_to_sys_product_name(self):
-        device = _make_device(last_status={"sysProductName": "Andersen A2 Pro"})
-        coordinator = _make_coordinator([device])
-
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
-
-        assert sensor._attr_device_info["model"] == "Andersen A2 Pro"
-
-    def test_falls_back_to_sys_product_id(self):
-        device = _make_device(last_status={"sysProductId": "A2"})
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
+        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
         assert sensor._attr_device_info["model"] == "A2"
 
-    def test_falls_back_to_hw_version(self):
-        device = _make_device(last_status={"sysHwVersion": "1.5"})
+    def test_integer_product_id_rendered_as_string(self):
+        device = _make_device(last_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
-        assert sensor._attr_device_info["model"] == "A2 (HW: 1.5)"
+        assert sensor._attr_device_info["model"] == "99"
 
-    def test_no_status_keeps_default_model(self):
+    def test_hw_fw_and_serial_populated(self):
+        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        coordinator = _make_coordinator([device])
+
+        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
+
+        assert sensor._attr_device_info["hw_version"] == "4"
+        assert sensor._attr_device_info["sw_version"] == "314"
+        assert sensor._attr_device_info["serial_number"] == "1234567890"
+
+    def test_no_status_keeps_default_device_info(self):
         device = _make_device(last_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
-        assert sensor._attr_device_info["model"] == "A2"
+        assert "model" not in sensor._attr_device_info
+        assert "hw_version" not in sensor._attr_device_info
+        assert "sw_version" not in sensor._attr_device_info
+        assert sensor._attr_device_info["serial_number"] == device.device_id
 
 
 class TestLiveSensorInit:

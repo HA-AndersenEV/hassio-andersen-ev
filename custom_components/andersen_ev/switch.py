@@ -124,10 +124,9 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
             identifiers={(DOMAIN, device.device_id)},
             name=f"{device.friendly_name} ({device.device_id})",
             manufacturer="Andersen EV",
-            model="A2",
             serial_number=f"{device.device_id}",
         )
-        self._update_model_from_device_status()
+        self._update_device_info_from_status()
 
     @property
     def extra_state_attributes(self):

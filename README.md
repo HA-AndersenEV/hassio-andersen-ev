@@ -84,10 +84,15 @@ data:
 ## Supported Devices
 
 This integration supports **Andersen A2** chargepoints connected to an Andersen Konnect+ account.
-Andersen currently makes one chargepoint product line, so there is nothing to select during setup:
-the integration reads the model name reported by the live API automatically (falling back to a
-generic "A2 (HW: ...)" hardware-revision label if the API doesn't report one), and shows it as the
-device model in **Settings > Devices & Services**.
+There is nothing to select during setup: the integration identifies the charger from the live API
+and fills in the model, hardware revision, firmware version and serial number on the device page in
+**Settings > Devices & Services**.
+
+The API reports an internal product name of its own (for the A2 it is "Thurlestone"), which is not
+what the charger is sold as and is not shown in the Konnect+ app, so the integration translates the
+known product ids to the name on the box. A charger whose product id we haven't seen before falls
+back to showing the internal name, so it is still identifiable. Either way the raw product id is
+kept as the model id on the device page.
 
 A single Andersen account can only be added once (the integration enforces one config entry per
 install), but if that account has more than one charger, every charger it returns is set up as its

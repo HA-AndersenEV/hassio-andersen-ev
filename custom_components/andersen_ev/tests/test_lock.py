@@ -14,7 +14,6 @@ def _make_device(
     user_lock=False,
     status_available=True,
     last_status=None,
-    model_name=None,
 ):
     """Build a mock KonnectDevice."""
     device = MagicMock()
@@ -23,7 +22,6 @@ def _make_device(
     device.user_lock = user_lock
     device.status_available = status_available
     device.last_status = last_status
-    device.model_name = model_name
     device.disable = AsyncMock(return_value=True)
     device.enable = AsyncMock(return_value=True)
     return device
@@ -155,48 +153,45 @@ class TestInit:
         assert lock._attr_device_info["serial_number"] == "device_1"
 
 
-class TestUpdateModelFromDeviceStatus:
-    """Tests for AndersenEvLock._update_model_from_device_status()."""
+class TestUpdateDeviceInfoFromStatus:
+    """Tests for AndersenEvLock._update_device_info_from_status()."""
 
-    def test_uses_model_name_when_present(self):
-        device = _make_device(model_name="Andersen A3")
-        coordinator = _make_coordinator([device])
-
-        lock = AndersenEvLock(coordinator, device)
-
-        assert lock._attr_device_info["model"] == "Andersen A3"
-
-    def test_falls_back_to_sys_product_name(self):
-        device = _make_device(last_status={"sysProductName": "Andersen A2 Pro"})
-        coordinator = _make_coordinator([device])
-
-        lock = AndersenEvLock(coordinator, device)
-
-        assert lock._attr_device_info["model"] == "Andersen A2 Pro"
-
-    def test_falls_back_to_sys_product_id(self):
-        device = _make_device(last_status={"sysProductId": "A2"})
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
+        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
 
         assert lock._attr_device_info["model"] == "A2"
 
-    def test_falls_back_to_hw_version(self):
-        device = _make_device(last_status={"sysHwVersion": "1.5"})
+    def test_integer_product_id_rendered_as_string(self):
+        device = _make_device(last_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
 
-        assert lock._attr_device_info["model"] == "A2 (HW: 1.5)"
+        assert lock._attr_device_info["model"] == "99"
 
-    def test_no_status_keeps_default_model(self):
+    def test_hw_fw_and_serial_populated(self):
+        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        coordinator = _make_coordinator([device])
+
+        lock = AndersenEvLock(coordinator, device)
+
+        assert lock._attr_device_info["hw_version"] == "4"
+        assert lock._attr_device_info["sw_version"] == "314"
+        assert lock._attr_device_info["serial_number"] == "1234567890"
+
+    def test_no_status_keeps_default_device_info(self):
         device = _make_device(last_status=None)
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
 
-        assert lock._attr_device_info["model"] == "A2"
+        assert "model" not in lock._attr_device_info
+        assert "hw_version" not in lock._attr_device_info
+        assert "sw_version" not in lock._attr_device_info
+        assert lock._attr_device_info["serial_number"] == device.device_id
 
 
 class TestAvailable:
