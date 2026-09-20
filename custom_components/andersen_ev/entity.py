@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.helpers.entity import DeviceInfo
 
+from .const import PRODUCT_NAMES
 from .konnect.device import KonnectDevice
 
 
@@ -36,9 +37,18 @@ class AndersenEvDeviceInfoMixin:
         status = self._device.last_status
         if not status:
             return
-        model = self._text(status.get("sysProductName")) or self._text(status.get("sysProductId"))
+        product_id = self._text(status.get("sysProductId"))
+        # Prefer the name the charger is sold under, then the API's internal product name,
+        # then the bare id, so an unrecognised charger still shows something identifiable.
+        model = (
+            (PRODUCT_NAMES.get(product_id) if product_id else None)
+            or self._text(status.get("sysProductName"))
+            or product_id
+        )
         if model:
             self._attr_device_info["model"] = model
+        if product_id:
+            self._attr_device_info["model_id"] = product_id
         if hw_version := self._text(status.get("sysHwVersion")):
             self._attr_device_info["hw_version"] = hw_version
         if sw_version := self._text(status.get("sysFwVersion")):

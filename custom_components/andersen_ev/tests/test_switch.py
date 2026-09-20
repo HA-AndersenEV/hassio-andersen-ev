@@ -294,21 +294,21 @@ class TestInit:
 class TestUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvScheduleSwitch._update_device_info_from_status()."""
 
-    def test_prefers_product_name_over_product_id(self):
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
         device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         switch = _make_switch(coordinator, device)
 
-        assert switch._attr_device_info["model"] == "Thurlestone"
+        assert switch._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 30})
+        device = _make_device(last_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         switch = _make_switch(coordinator, device)
 
-        assert switch._attr_device_info["model"] == "30"
+        assert switch._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
         device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})

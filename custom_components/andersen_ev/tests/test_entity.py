@@ -22,19 +22,39 @@ def _make_device(last_status=None):
 class TestUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvDeviceInfoMixin._update_device_info_from_status()."""
 
-    def test_prefers_product_name_over_product_id(self):
+    def test_known_product_id_maps_to_the_marketed_model_name(self):
+        """The API's own product name is internal, so a confirmed id wins over it."""
         entity = _StubEntity(_make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30}))
 
         entity._update_device_info_from_status()
 
-        assert entity._attr_device_info["model"] == "Thurlestone"
+        assert entity._attr_device_info["model"] == "A2"
+        assert entity._attr_device_info["model_id"] == "30"
 
-    def test_integer_product_id_rendered_as_string(self):
-        entity = _StubEntity(_make_device(last_status={"sysProductId": 30}))
+    def test_unknown_product_id_falls_back_to_the_product_name(self):
+        """A charger we have never seen still gets a readable model, not a bare number."""
+        entity = _StubEntity(_make_device(last_status={"sysProductName": "Newquay", "sysProductId": 99}))
 
         entity._update_device_info_from_status()
 
-        assert entity._attr_device_info["model"] == "30"
+        assert entity._attr_device_info["model"] == "Newquay"
+        assert entity._attr_device_info["model_id"] == "99"
+
+    def test_product_name_without_a_product_id_leaves_model_id_unset(self):
+        entity = _StubEntity(_make_device(last_status={"sysProductName": "Newquay"}))
+
+        entity._update_device_info_from_status()
+
+        assert entity._attr_device_info["model"] == "Newquay"
+        assert "model_id" not in entity._attr_device_info
+
+    def test_integer_product_id_rendered_as_string(self):
+        entity = _StubEntity(_make_device(last_status={"sysProductId": 99}))
+
+        entity._update_device_info_from_status()
+
+        assert entity._attr_device_info["model"] == "99"
+        assert entity._attr_device_info["model_id"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
         entity = _StubEntity(
@@ -59,7 +79,7 @@ class TestUpdateDeviceInfoFromStatus:
             _make_device(
                 last_status={
                     "sysProductName": None,
-                    "sysProductId": 30,
+                    "sysProductId": 99,
                     "sysHwVersion": None,
                     "sysFwVersion": None,
                     "konnectSerial": None,
@@ -70,7 +90,7 @@ class TestUpdateDeviceInfoFromStatus:
         entity._update_device_info_from_status()
 
         # A null product name must fall through to the product id rather than block it.
-        assert entity._attr_device_info["model"] == "30"
+        assert entity._attr_device_info["model"] == "99"
         assert "hw_version" not in entity._attr_device_info
         assert "sw_version" not in entity._attr_device_info
         assert entity._attr_device_info["serial_number"] == "test_device_123"
@@ -83,6 +103,7 @@ class TestUpdateDeviceInfoFromStatus:
         entity._update_device_info_from_status()
 
         assert "model" not in entity._attr_device_info
+        assert "model_id" not in entity._attr_device_info
         assert entity._attr_device_info["serial_number"] == "test_device_123"
 
     def test_missing_status_leaves_device_info_unchanged(self):
