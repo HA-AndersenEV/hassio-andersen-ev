@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import dateutil.parser
 from homeassistant.components.sensor import (
@@ -20,6 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
@@ -316,12 +318,34 @@ class AndersenEvBaseSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         # We need to override this because the last charge might be None
         return self.coordinator.last_update_success and self._device.last_charge is not None
 
+    @property
+    def last_reset(self) -> datetime | None:
+        """Return the start of the last charge session, as an aware datetime.
+
+        This is the metering-cycle boundary for TOTAL state class sensors: HA sums a new
+        value into long-term statistics whenever last_reset changes, so each charge session
+        is counted as its own cycle rather than diffed against the previous one.
+        """
+        last_charge = self._device.last_charge
+        if not last_charge:
+            return None
+        start = last_charge.get("startDateTimeLocal")
+        if not start:
+            return None
+        try:
+            parsed = dt_util.parse_datetime(start)
+        except (TypeError, ValueError):
+            return None
+        if parsed is None:
+            return None
+        return dt_util.as_local(parsed)
+
 
 class AndersenEvEnergySensor(AndersenEvBaseSensor):
     """Sensor for Andersen EV energy values."""
 
     _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
 
     def __init__(self, coordinator: AndersenEvCoordinator, device, sensor_type, data_key) -> None:
