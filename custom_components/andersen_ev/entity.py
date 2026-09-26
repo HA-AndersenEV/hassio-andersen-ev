@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from homeassistant.helpers.entity import DeviceInfo
+from typing import cast
+
+from homeassistant.helpers.entity import ChildDeviceInfo, DeviceInfo
 
 from .const import PRODUCT_NAMES
 from .konnect.device import KonnectDevice
@@ -17,7 +19,7 @@ class AndersenEvDeviceInfoMixin:
     """
 
     _device: KonnectDevice
-    _attr_device_info: DeviceInfo | None
+    _attr_device_info: DeviceInfo | ChildDeviceInfo | None
 
     @staticmethod
     def _text(value: object) -> str | None:
@@ -34,6 +36,7 @@ class AndersenEvDeviceInfoMixin:
     def _update_device_info_from_status(self) -> None:
         """Update model, hardware/firmware version and serial number from device status."""
         assert self._attr_device_info is not None, "_attr_device_info must be set before this call"
+        device_info = cast(DeviceInfo, self._attr_device_info)
         status = self._device.last_status
         if not status:
             return
@@ -46,12 +49,12 @@ class AndersenEvDeviceInfoMixin:
             or product_id
         )
         if model:
-            self._attr_device_info["model"] = model
+            device_info["model"] = model
         if product_id:
-            self._attr_device_info["model_id"] = product_id
+            device_info["model_id"] = product_id
         if hw_version := self._text(status.get("sysHwVersion")):
-            self._attr_device_info["hw_version"] = hw_version
+            device_info["hw_version"] = hw_version
         if sw_version := self._text(status.get("sysFwVersion")):
-            self._attr_device_info["sw_version"] = sw_version
+            device_info["sw_version"] = sw_version
         if serial_number := self._text(status.get("konnectSerial")):
-            self._attr_device_info["serial_number"] = serial_number
+            device_info["serial_number"] = serial_number
