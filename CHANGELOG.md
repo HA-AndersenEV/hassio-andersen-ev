@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.0...v0.12.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* record charging sessions correctly in energy statistics ([#104](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/104)) ([fe77f1a](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/fe77f1ab7a21c7bc4d883827f06b511024b455b8))
+* show the real charger model, firmware and serial number ([#106](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/106)) ([ff6e3aa](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/ff6e3aa1cd235cededac6a7fc029553f8f1aaf82))
+
 ## [0.12.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.11.0...v0.12.0) (2026-09-19)
 
 
