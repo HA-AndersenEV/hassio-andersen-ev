@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import ChildDeviceInfo, DeviceInfo
 
 from .const import PRODUCT_NAMES
 from .konnect.device import KonnectDevice
@@ -17,7 +17,7 @@ class AndersenEvDeviceInfoMixin:
     """
 
     _device: KonnectDevice
-    _attr_device_info: DeviceInfo | None
+    _attr_device_info: DeviceInfo | ChildDeviceInfo | None
 
     @staticmethod
     def _text(value: object) -> str | None:
