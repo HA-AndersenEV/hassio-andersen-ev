@@ -94,6 +94,124 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
             "surplus_energy",
             "surplusUsedEnergyTotal",
         )
+
+        # Live status sensors
+        # sysGridPower/sysSolarPower are declared KILO_WATT; chargeStatus.gridPower
+        # below is declared WATT for the same physical quantity but only reports
+        # during a charge session. Unit verified via live load test (~2.9 kW kettle).
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_grid_power",
+                "System Grid Power",
+                "sysGridPower",
+                SensorDeviceClass.POWER,
+                SensorStateClass.MEASUREMENT,
+                UnitOfPower.KILO_WATT,
+                "mdi:transmission-tower",
+            )
+        )
+        # --- Solar live sensors -------------------------------------------------
+        # sysSolarPower/sysSolarEnergyDelta/sysChargePower are already fetched in
+        # the GraphQL query (konnect/const.py) but were never exposed as entities.
+        # They live in deviceStatus, not chargeStatus, so they report continuously
+        # - not just during a charge session - making this a whole-house solar
+        # monitor for free.
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_solar_power",
+                "System Solar Power",
+                "sysSolarPower",
+                SensorDeviceClass.POWER,
+                SensorStateClass.MEASUREMENT,
+                UnitOfPower.KILO_WATT,
+                "mdi:solar-power",
+            )
+        )
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_charge_power",
+                "System Charge Power",
+                "sysChargePower",
+                SensorDeviceClass.POWER,
+                SensorStateClass.MEASUREMENT,
+                UnitOfPower.KILO_WATT,
+                "mdi:ev-station",
+            )
+        )
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_solar_energy_delta",
+                "System Solar Energy Delta",
+                "sysSolarEnergyDelta",
+                SensorDeviceClass.ENERGY,
+                SensorStateClass.TOTAL,
+                UnitOfEnergy.KILO_WATT_HOUR,
+                "mdi:solar-power",
+            )
+        )
+        # --- CT clamp diagnostics ------------------------------------------------
+        # Raw CT readings and configuration - not for the Energy dashboard. These
+        # exist to diagnose mis-clamped or mis-configured CTs, a common cause of
+        # solar generation reading suspiciously low.
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_solar_ct",
+                "Solar CT",
+                "sysSolarCT",
+                None,
+                None,
+                None,
+                "mdi:gauge",
+            )
+        )
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_grid_ct",
+                "Grid CT",
+                "sysGridCT",
+                None,
+                None,
+                None,
+                "mdi:gauge",
+            )
+        )
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "cfg_ct_config",
+                "CT Configuration",
+                "cfgCTConfig",
+                None,
+                None,
+                None,
+                "mdi:cog-outline",
+            )
+        )
+        entities.append(
+            AndersenEvLiveSensor(
+                coordinator,
+                device,
+                "sys_temperature",
+                "System Temperature",
+                "sysTemperature",
+                SensorDeviceClass.TEMPERATURE,
+                SensorStateClass.MEASUREMENT,
+                UnitOfTemperature.CELSIUS,
+                "mdi:temperature-celsius",
+            )
     )
 
     # Live status sensors
