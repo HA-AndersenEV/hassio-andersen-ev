@@ -120,7 +120,37 @@ required for entities to update or for services/lock actions to work.
 A `DataUpdateCoordinator` polls the API every 60 seconds for all devices on the account. After a
 lock/unlock, schedule change, or RCM reset, the integration waits briefly before requesting a
 refresh, since the API needs a moment to apply the change before it's reflected in the polled
-status.
+status. The charger itself only reports in about every 90 seconds, so a change is often not visible
+until a later poll.
+
+### Lock states and pending commands
+
+The charger takes a while to act on a lock or unlock command, and Andersen's API gives no reliable
+confirmation that it did, so the lock entity only reports a change once the charger's own status
+shows it. In the meantime:
+
+* After you lock or unlock, the entity shows **`locking`** or **`unlocking`** until the charger
+  confirms. A confirmed change can take up to about 2.5 minutes to appear.
+* If nothing confirms the command within 3 minutes, the entity goes back to the state the charger
+  reports and a warning is logged. A command sent while the charger is offline is queued by the
+  cloud and applied when the charger reconnects, which can be much later.
+* Pressing the same action again while it is pending does nothing.
+* If the charger has not reported its lock state yet (for example just after Home Assistant starts),
+  the entity shows **`unknown`**.
+
+Because the lock passes through `locking` and `unlocking`, an automation trigger that uses `from:`
+with a lock state, such as `from: locked` and `to: unlocked`, will not match. Trigger on `to:` alone,
+or include the transitional state:
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: lock.my_charger_lock
+    from: [locked, unlocking]
+    to: unlocked
+```
+
+Also note that a condition such as "only if unlocked" is false while a command is pending.
 
 If a poll fails, the integration keeps showing the last-known good data instead of immediately
 marking entities unavailable, so a brief cloud hiccup doesn't blank your dashboard. Entities are
