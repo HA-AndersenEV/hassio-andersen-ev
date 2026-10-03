@@ -1,6 +1,7 @@
 """Tests for KonnectDevice GraphQL calls."""
 # pylint: disable=protected-access
 
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -342,6 +343,42 @@ class TestDeviceGraphQLCalls:
 
         assert result is False
         assert mock_device.user_lock is True
+
+    @pytest.mark.asyncio
+    async def test_enable_does_not_write_user_lock_on_success(self, mock_device, graphql_command_success_response):
+        """Test enable() leaves user_lock to the status read-back rather than guessing it."""
+        mock_device.user_lock = True
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value=graphql_command_success_response)
+
+        await mock_device.enable()
+
+        assert mock_device.user_lock is True
+
+    @pytest.mark.asyncio
+    async def test_disable_does_not_write_user_lock_on_success(self, mock_device, graphql_command_success_response):
+        """Test disable() leaves user_lock to the status read-back rather than guessing it."""
+        mock_device.user_lock = False
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value=graphql_command_success_response)
+
+        await mock_device.disable()
+
+        assert mock_device.user_lock is False
+
+    @pytest.mark.asyncio
+    async def test_null_command_result_is_accepted_but_not_reported_as_done(self, mock_device, caplog):
+        """Test a null runAEVCommand result counts as sent, and is logged as unconfirmed.
+
+        The API returns null for commands that are queued, applied, or no-ops alike, so the
+        result says nothing about whether the charger changed state.
+        """
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value={"runAEVCommand": None})
+
+        with caplog.at_level(logging.DEBUG):
+            result = await mock_device.enable()
+
+        assert result is True
+        assert "awaiting confirmation" in caplog.text
+        assert "Successfully" not in caplog.text
 
     # -- status change logging ----------------------------------------------
 

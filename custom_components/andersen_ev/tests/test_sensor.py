@@ -1,6 +1,6 @@
 """Tests for the Andersen EV sensor platform."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -784,6 +784,146 @@ class TestChargeStatusSensorNativeValue:
 
         assert sensor.native_value == 500
         assert sensor._device is updated_device
+
+
+REALTIME_ENERGY_SENSORS = [
+    ("current_charge_energy", "chargeEnergyTotal"),
+    ("current_solar_energy", "solarEnergyTotal"),
+    ("current_grid_energy", "gridEnergyTotal"),
+]
+
+
+def _realtime_energy_sensor(device, sensor_type="current_charge_energy", data_key="chargeEnergyTotal"):
+    """Build a realtime energy sensor the way async_setup_entry declares it."""
+    return AndersenEvChargeStatusSensor(
+        _make_coordinator([device]),
+        device,
+        sensor_type,
+        data_key,
+        SensorDeviceClass.ENERGY,
+        SensorStateClass.TOTAL,
+        UnitOfEnergy.KILO_WATT_HOUR,
+    )
+
+
+class TestChargeStatusSensorLastReset:
+    """Tests for AndersenEvChargeStatusSensor.last_reset.
+
+    Without a last_reset, Home Assistant cannot tell a new session from a drop in the value, so it
+    subtracts the finished session from long-term statistics when the next one starts at zero.
+    """
+
+    @pytest.mark.parametrize(("sensor_type", "data_key"), REALTIME_ENERGY_SENSORS)
+    def test_energy_total_sensors_report_the_session_start(self, sensor_type, data_key):
+        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", data_key: 4.08}})
+        sensor = _realtime_energy_sensor(device, sensor_type, data_key)
+
+        assert sensor.last_reset == datetime(2026, 10, 2, 6, 12, 41, tzinfo=UTC)
+        assert sensor.last_reset.tzinfo is not None
+
+    def test_a_new_session_changes_last_reset(self):
+        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
+        sensor = _realtime_energy_sensor(device)
+        first = sensor.last_reset
+
+        device.last_status = {"chargeStatus": {"start": "2026-10-03T00:30:05+01:00"}}
+
+        assert sensor.last_reset != first
+        assert sensor.last_reset == datetime(2026, 10, 2, 23, 30, 5, tzinfo=UTC)
+
+    def test_same_session_keeps_last_reset_stable(self):
+        device = _make_device(
+            last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargeEnergyTotal": 1}}
+        )
+        sensor = _realtime_energy_sensor(device)
+        first = sensor.last_reset
+        assert first is not None
+
+        device.last_status = {"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargeEnergyTotal": 2}}
+
+        assert sensor.last_reset == first
+
+    def test_uninitialised_clock_after_a_restart_is_a_normal_new_session(self):
+        """A restarted charger reports a 2000-01-01 start with its counters back at zero.
+
+        That is a genuine new cycle, so it passes through like any other start time.
+        """
+        device = _make_device(last_status={"chargeStatus": {"start": "2000-01-01T01:00:21+01:00"}})
+        sensor = _realtime_energy_sensor(device)
+
+        assert sensor.last_reset == datetime(2000, 1, 1, 0, 0, 21, tzinfo=UTC)
+
+    def test_start_without_an_offset_is_read_as_local_time(self):
+        original_tz = dt_util.DEFAULT_TIME_ZONE
+        dt_util.set_default_time_zone(dt_util.get_time_zone("America/New_York"))
+        try:
+            device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41"}})
+            sensor = _realtime_energy_sensor(device)
+
+            last_reset = sensor.last_reset
+
+            assert last_reset is not None
+            assert last_reset.utcoffset() == timedelta(hours=-4)
+            assert (last_reset.hour, last_reset.minute) == (7, 12)
+        finally:
+            dt_util.set_default_time_zone(original_tz)
+
+    def test_power_sensor_has_no_last_reset(self):
+        """Home Assistant rejects last_reset on anything but an energy total."""
+        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargePower": 7}})
+        sensor = AndersenEvChargeStatusSensor(
+            _make_coordinator([device]),
+            device,
+            "charge_power",
+            "chargePower",
+            SensorDeviceClass.POWER,
+            SensorStateClass.MEASUREMENT,
+            UnitOfPower.WATT,
+        )
+
+        assert sensor.last_reset is None
+
+    def test_session_start_sensor_has_no_last_reset(self):
+        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
+        sensor = AndersenEvChargeStatusSensor(
+            _make_coordinator([device]), device, "session_start", "start", SensorDeviceClass.TIMESTAMP
+        )
+
+        assert sensor.last_reset is None
+
+    @pytest.mark.parametrize(
+        "last_status",
+        [
+            None,
+            {"other": True},
+            {"chargeStatus": {}},
+            {"chargeStatus": {"start": None}},
+            {"chargeStatus": {"start": ""}},
+            {"chargeStatus": {"start": "not-a-date"}},
+            {"chargeStatus": {"start": 12345}},
+        ],
+    )
+    def test_returns_none_when_start_is_missing_or_unusable(self, last_status):
+        device = _make_device(last_status=last_status)
+        sensor = _realtime_energy_sensor(device)
+
+        assert sensor.last_reset is None
+
+    def test_follows_the_coordinators_current_device(self):
+        """The coordinator replaces device objects between refreshes, so a stale reference must not stick."""
+        stale = _make_device(device_id="device_1", last_status=None)
+        fresh = _make_device(device_id="device_1", last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
+        sensor = AndersenEvChargeStatusSensor(
+            _make_coordinator([fresh]),
+            stale,
+            "current_charge_energy",
+            "chargeEnergyTotal",
+            SensorDeviceClass.ENERGY,
+            SensorStateClass.TOTAL,
+            UnitOfEnergy.KILO_WATT_HOUR,
+        )
+
+        assert sensor.last_reset == datetime(2026, 10, 2, 6, 12, 41, tzinfo=UTC)
 
 
 class TestChargeStatusSensorAsyncUpdate:

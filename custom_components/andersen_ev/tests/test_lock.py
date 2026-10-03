@@ -1,5 +1,6 @@
 """Tests for the Andersen EV lock platform."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -243,19 +244,20 @@ class TestIsLocked:
 
         assert lock.is_locked is False
 
-    def test_falls_back_to_user_lock_when_no_status(self):
-        device = _make_device(last_status=None, user_lock=False)
+    def test_unknown_when_no_status(self):
+        """The getDevices userLock flag disagrees with status on real chargers, so don't guess from it."""
+        device = _make_device(last_status=None, user_lock=True)
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
 
-        assert lock.is_locked is True
+        assert lock.is_locked is None
 
-    def test_falls_back_to_user_lock_when_key_missing(self):
+    def test_unknown_when_key_missing(self):
         device = _make_device(last_status={"other": 1}, user_lock=True)
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
 
-        assert lock.is_locked is False
+        assert lock.is_locked is None
 
     def test_device_not_found_returns_false(self):
         device = _make_device(device_id="device_1")
@@ -264,7 +266,7 @@ class TestIsLocked:
 
         assert lock.is_locked is False
 
-    def test_exception_reading_status_falls_back(self):
+    def test_exception_reading_status_is_unknown(self):
         class RaisingStatus:
             def __contains__(self, item):
                 raise RuntimeError("boom")
@@ -277,7 +279,7 @@ class TestIsLocked:
         lock = AndersenEvLock(coordinator, device)
         lock._device.last_status = RaisingStatus()
 
-        assert lock.is_locked is True
+        assert lock.is_locked is None
 
 
 class TestAsyncLock:
@@ -289,6 +291,7 @@ class TestAsyncLock:
         device.disable = AsyncMock(return_value=True)
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
+        lock.async_write_ha_state = MagicMock()
 
         await lock.async_lock()
 
@@ -317,6 +320,7 @@ class TestAsyncUnlock:
         device.enable = AsyncMock(return_value=True)
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
+        lock.async_write_ha_state = MagicMock()
 
         await lock.async_unlock()
 
@@ -334,3 +338,153 @@ class TestAsyncUnlock:
             await lock.async_unlock()
 
         coordinator.async_request_refresh.assert_not_awaited()
+
+
+class TestPendingCommand:
+    """Tests for the locking/unlocking state shown while a command awaits confirmation."""
+
+    @staticmethod
+    def _make_lock(user_lock_status):
+        device = _make_device(last_status={"sysUserLock": user_lock_status})
+        coordinator = _make_coordinator([device])
+        lock = AndersenEvLock(coordinator, device)
+        lock.async_write_ha_state = MagicMock()
+        return lock, device, coordinator
+
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        """Controllable replacement for the lock module's monotonic clock."""
+        now = [1000.0]
+        monkeypatch.setattr("andersen_ev.lock.monotonic", lambda: now[0])
+        return now
+
+    @pytest.mark.asyncio
+    async def test_unlock_shows_unlocking_until_status_confirms(self, clock):
+        lock, device, _ = self._make_lock(True)
+
+        await lock.async_unlock()
+
+        assert lock.is_unlocking is True
+        assert lock.is_locking is False
+        assert lock.is_locked is True  # still the charger's real, unconfirmed state
+
+        device.last_status = {"sysUserLock": False}
+
+        assert lock.is_unlocking is False
+        assert lock.is_locked is False
+
+    @pytest.mark.asyncio
+    async def test_lock_shows_locking_until_status_confirms(self, clock):
+        lock, device, _ = self._make_lock(False)
+
+        await lock.async_lock()
+
+        assert lock.is_locking is True
+        assert lock.is_unlocking is False
+        assert lock.is_locked is False
+
+        device.last_status = {"sysUserLock": True}
+
+        assert lock.is_locking is False
+        assert lock.is_locked is True
+
+    @pytest.mark.asyncio
+    async def test_state_is_written_immediately_so_the_ui_reflects_the_command(self, clock):
+        lock, _, _ = self._make_lock(True)
+
+        await lock.async_unlock()
+
+        lock.async_write_ha_state.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_unconfirmed_command_reverts_after_timeout_and_warns(self, clock, caplog):
+        lock, _, _ = self._make_lock(True)
+        await lock.async_unlock()
+
+        clock[0] += 181
+        with caplog.at_level(logging.WARNING):
+            assert lock.is_unlocking is False
+
+        assert lock.is_locked is True
+        assert "not confirmed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_still_pending_just_before_timeout(self, clock):
+        lock, _, _ = self._make_lock(True)
+        await lock.async_unlock()
+
+        clock[0] += 179
+
+        assert lock.is_unlocking is True
+
+    @pytest.mark.asyncio
+    async def test_repeat_press_while_pending_sends_nothing(self, clock):
+        lock, device, _ = self._make_lock(True)
+
+        await lock.async_unlock()
+        await lock.async_unlock()
+
+        device.enable.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_opposite_press_while_pending_replaces_the_pending_command(self, clock):
+        lock, device, _ = self._make_lock(True)
+        await lock.async_unlock()
+
+        await lock.async_lock()
+
+        device.disable.assert_awaited_once()
+        assert lock.is_locking is False  # already locked, nothing left to wait for
+        assert lock.is_unlocking is False
+
+    @pytest.mark.asyncio
+    async def test_command_already_matching_status_is_not_shown_as_pending(self, clock):
+        lock, _, _ = self._make_lock(True)
+
+        await lock.async_lock()
+
+        assert lock.is_locking is False
+
+    @pytest.mark.asyncio
+    async def test_failed_command_leaves_nothing_pending(self, clock):
+        lock, device, _ = self._make_lock(True)
+        device.enable = AsyncMock(return_value=False)
+
+        with pytest.raises(HomeAssistantError):
+            await lock.async_unlock()
+
+        assert lock.is_unlocking is False
+
+    @pytest.mark.asyncio
+    async def test_pending_survives_missing_status_until_timeout(self, clock):
+        lock, device, _ = self._make_lock(True)
+        await lock.async_unlock()
+
+        device.last_status = None
+
+        assert lock.is_unlocking is True
+        assert lock.is_locked is None
+
+    @pytest.mark.asyncio
+    async def test_rendered_state_follows_the_command_lifecycle(self, clock):
+        """The state string is what Home Assistant users and automations actually see."""
+        lock, device, _ = self._make_lock(True)
+        assert lock.state == "locked"
+
+        await lock.async_unlock()
+        assert lock.state == "unlocking"
+
+        device.last_status = {"sysUserLock": False}
+        assert lock.state == "unlocked"
+
+        await lock.async_lock()
+        assert lock.state == "locking"
+
+        clock[0] += 181
+        assert lock.state == "unlocked"  # unconfirmed lock reverts to what the charger reports
+
+    def test_rendered_state_is_unknown_when_charger_has_not_reported(self):
+        device = _make_device(last_status=None)
+        lock = AndersenEvLock(_make_coordinator([device]), device)
+
+        assert lock.state is None
