@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 import dateutil.parser
 from homeassistant.components.sensor import (
@@ -290,6 +291,19 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
     return entities
 
 
+def _session_start_as_local(start: Any) -> datetime | None:
+    """Parse a charge session start time into an aware local datetime, or None if unusable."""
+    if not start:
+        return None
+    try:
+        parsed = dt_util.parse_datetime(start)
+    except (TypeError, ValueError):
+        return None
+    if parsed is None:
+        return None
+    return dt_util.as_local(parsed)
+
+
 class AndersenEvBaseSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SensorEntity):
     """Base class for Andersen EV sensors."""
 
@@ -328,16 +342,7 @@ class AndersenEvBaseSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         last_charge = self._device.last_charge
         if not last_charge:
             return None
-        start = last_charge.get("startDateTimeLocal")
-        if not start:
-            return None
-        try:
-            parsed = dt_util.parse_datetime(start)
-        except (TypeError, ValueError):
-            return None
-        if parsed is None:
-            return None
-        return dt_util.as_local(parsed)
+        return _session_start_as_local(last_charge.get("startDateTimeLocal"))
 
 
 class AndersenEvEnergySensor(AndersenEvBaseSensor):
@@ -575,6 +580,26 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
                     return None
             return value
         return None
+
+    @property
+    def last_reset(self) -> datetime | None:
+        """Return the start of the live charge session, for energy total sensors only.
+
+        These sensors count up through a session and start again from zero in the next one. Home
+        Assistant can only tell that apart from a drop in the value if last_reset changes with each
+        session; without it, the finished session is subtracted from long-term statistics. Home
+        Assistant rejects last_reset on any other kind of sensor, so the rest return None.
+        """
+        if self.state_class != SensorStateClass.TOTAL:
+            return None
+        for device in self.coordinator.data:
+            if device.device_id == self._device.device_id:
+                self._device = device
+                break
+        status = self._device.last_status
+        if not status:
+            return None
+        return _session_start_as_local((status.get("chargeStatus") or {}).get("start"))
 
     async def async_update(self) -> None:
         """Update the entity with latest status from coordinator."""
