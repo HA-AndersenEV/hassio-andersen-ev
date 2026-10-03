@@ -87,8 +87,11 @@ class KonnectDevice:
         _LOGGER.debug("Attempting to enable charging for device %s (%s)", self.device_id, self.friendly_name)
         success = await self._run_command("userUnlock")
         if success:
-            _LOGGER.debug("Successfully enabled charging for device %s (%s)", self.device_id, self.friendly_name)
-            self.user_lock = True
+            _LOGGER.debug(
+                "Unlock command sent for device %s (%s), awaiting confirmation from the charger",
+                self.device_id,
+                self.friendly_name,
+            )
         else:
             _LOGGER.warning("Failed to enable charging for device %s (%s)", self.device_id, self.friendly_name)
         return success
@@ -98,8 +101,11 @@ class KonnectDevice:
         _LOGGER.debug("Attempting to disable charging for device %s (%s)", self.device_id, self.friendly_name)
         success = await self._run_command("userLock")
         if success:
-            _LOGGER.debug("Successfully disabled charging for device %s (%s)", self.device_id, self.friendly_name)
-            self.user_lock = False
+            _LOGGER.debug(
+                "Lock command sent for device %s (%s), awaiting confirmation from the charger",
+                self.device_id,
+                self.friendly_name,
+            )
         else:
             _LOGGER.warning("Failed to disable charging for device %s (%s)", self.device_id, self.friendly_name)
         return success
