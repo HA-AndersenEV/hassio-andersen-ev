@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 
-from andersen_ev.lock import AndersenEvLock, async_setup_entry
+from andersen_ev.lock import COMMAND_CONFIRM_TIMEOUT, AndersenEvLock, async_setup_entry
 
 
 def _make_device(
@@ -401,7 +401,7 @@ class TestPendingCommand:
         lock, _, _ = self._make_lock(True)
         await lock.async_unlock()
 
-        clock[0] += 181
+        clock[0] += COMMAND_CONFIRM_TIMEOUT + 1
         with caplog.at_level(logging.WARNING):
             assert lock.is_unlocking is False
 
@@ -413,7 +413,7 @@ class TestPendingCommand:
         lock, _, _ = self._make_lock(True)
         await lock.async_unlock()
 
-        clock[0] += 179
+        clock[0] += COMMAND_CONFIRM_TIMEOUT - 1
 
         assert lock.is_unlocking is True
 
@@ -480,7 +480,7 @@ class TestPendingCommand:
         await lock.async_lock()
         assert lock.state == "locking"
 
-        clock[0] += 181
+        clock[0] += COMMAND_CONFIRM_TIMEOUT + 1
         assert lock.state == "unlocked"  # unconfirmed lock reverts to what the charger reports
 
     def test_rendered_state_is_unknown_when_charger_has_not_reported(self):

@@ -131,7 +131,7 @@ shows it. In the meantime:
 
 * After you lock or unlock, the entity shows **`locking`** or **`unlocking`** until the charger
   confirms. A confirmed change can take up to about 2.5 minutes to appear.
-* If nothing confirms the command within 3 minutes, the entity goes back to the state the charger
+* If nothing confirms the command within 5 minutes, the entity goes back to the state the charger
   reports and a warning is logged. A command sent while the charger is offline is queued by the
   cloud and applied when the charger reconnects, which can be much later.
 * Pressing the same action again while it is pending does nothing.
