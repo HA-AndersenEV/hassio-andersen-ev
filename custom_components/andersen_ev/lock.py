@@ -20,9 +20,10 @@ from .entity import AndersenEvDeviceInfoMixin
 PARALLEL_UPDATES = 1
 
 # How long a sent command may show as locking/unlocking before it is treated as unconfirmed.
-# The charger reports in at most every 90s and the coordinator polls every 60s, so a command that
-# landed normally is visible well inside this window.
-COMMAND_CONFIRM_TIMEOUT = 180  # seconds
+# The charger reports in about every 90s and the coordinator polls every 60s, and on the real
+# charger a command has taken anywhere from about 1 to 2.5 minutes to be confirmed, so this leaves
+# generous headroom: expiring early would show the old state while the command is still on its way.
+COMMAND_CONFIRM_TIMEOUT = 300  # seconds
 
 _LOGGER = logging.getLogger(__name__)
 
