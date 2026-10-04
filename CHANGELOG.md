@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.1](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.0...v0.12.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* give the lock more time to confirm a lock or unlock command ([#114](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/114)) ([38d54a7](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/38d54a7c9e77de754d8f364ab90224cb2eb7a3b0))
+* record charging sessions correctly in energy statistics ([#104](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/104)) ([fe77f1a](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/fe77f1ab7a21c7bc4d883827f06b511024b455b8))
+* show lock and unlock as pending until the charger confirms ([#112](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/112)) ([3821047](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/38210471d654eb541ef66bbfc9ac9f0052b5c021))
+* show the real charger model, firmware and serial number ([#106](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/106)) ([ff6e3aa](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/ff6e3aa1cd235cededac6a7fc029553f8f1aaf82))
+* stop live charge energy sensors subtracting finished sessions from statistics ([#113](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/113)) ([bf122f4](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/bf122f4a2b208b06b740bbf43d8743623de0709d))
+
 ## [0.12.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.11.0...v0.12.0) (2026-09-19)
 
 
