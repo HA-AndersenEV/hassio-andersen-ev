@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.1...v0.12.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* Updates minimum Home Assistant version to 2026.9.3. For earlier versions, stay on 12.0 or earlier. ([4b36f25](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/4b36f254615380cbc4b29dabb73b3235ed6d08ac))
+
 ## [0.12.1](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.0...v0.12.1) (2026-10-04)
 
 
