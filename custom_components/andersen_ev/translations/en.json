@@ -61,10 +61,15 @@
       "session_start": { "name": "Session Start Time" }
     },
     "switch": {
-      "schedule": { "name": "Schedule {index}" }
+      "schedule": { "name": "Schedule {index}" },
+      "solar_override": { "name": "Solar override" },
+      "solar_charge_always": { "name": "Supplement with grid power" }
     },
     "lock": {
       "lock": { "name": "Lock" }
+    },
+    "number": {
+      "solar_max_grid_charge_percent": { "name": "Solar max grid charge percent" }
     }
   },
   "exceptions": {
@@ -82,21 +87,6 @@
     "api_shape_changed": {
       "title": "Andersen API response format has changed",
       "description": "The Andersen EV cloud API returned data in an unexpected format. This usually means Andersen changed their API and the integration may need to be updated. Please check for an integration update, or report this issue if none is available."
-    }
-  },
-  "entity": {
-    "switch": {
-      "solar_override": {
-        "name": "Solar override"
-      },
-      "solar_charge_always": {
-        "name": "Supplement with grid power"
-      }
-    },
-    "number": {
-      "solar_max_grid_charge_percent": {
-        "name": "Solar max grid charge percent"
-      }
     }
   }
 }

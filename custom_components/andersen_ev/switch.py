@@ -25,8 +25,8 @@ _LOGGER = logging.getLogger(__name__)
 
 async def _async_build_switches_for_device(
     coordinator: AndersenEvCoordinator, device
-) -> list[AndersenEvScheduleSwitch]:
-    """Build schedule switches for a single device (fetches device info)."""
+) -> list[SwitchEntity]:
+    """Build schedule and solar switches for a single device (fetches device info)."""
     # Get device info including schedule names and schedule slots
     device_info = await device.get_device_info()
     if not device_info or "deviceInfo" not in device_info:
@@ -47,7 +47,10 @@ async def _async_build_switches_for_device(
     device_info_data = device_info["deviceInfo"]
 
     # Create switches for each schedule
-    entities = []
+    entities: list[SwitchEntity] = [
+        AndersenEvSolarOverrideSwitch(coordinator, device),
+        AndersenEvSolarChargeAlwaysSwitch(coordinator, device),
+    ]
     for idx, _slot in enumerate(schedule_slots):
         # Get the schedule name from deviceInfo if available
         schedule_name_key = f"schedule{idx}Name"
@@ -384,6 +387,19 @@ class AndersenEvSolarSwitch(CoordinatorEntity, SwitchEntity):  # pylint: disable
                 return self.coordinator.last_update_success
         return False
 
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if the solar setting is enabled."""
+        for device in self.coordinator.data:
+            if device.device_id == self._device.device_id:
+                self._device = device
+                break
+
+        solar_status = self._device.last_solar_status
+        if solar_status.get(self._solar_field) is None:
+            return None
+        return bool(solar_status[self._solar_field])
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable the solar setting."""
         await self._set_solar_value(True)
@@ -411,10 +427,10 @@ class AndersenEvSolarSwitch(CoordinatorEntity, SwitchEntity):  # pylint: disable
             success = await self._device.set_solar(**kwargs_dict)
 
             if success:
-                # Force the entity to update its state immediately
+                if self._device._last_solar_status is None:
+                    self._device._last_solar_status = {}
+                self._device._last_solar_status[self._solar_field] = value
                 self.async_write_ha_state()
-
-                # Request a refresh of the coordinator data to verify
                 await self.coordinator.async_request_refresh()
             else:
                 _LOGGER.warning(
@@ -440,6 +456,3 @@ class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch):
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, device, "solarChargeAlways", "Supplement with grid power")
-        super().__init__(
-            coordinator, device, "solarChargeAlways", "Supplement with grid power"
-        )

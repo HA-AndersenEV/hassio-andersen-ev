@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.number import NumberEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import AndersenEvCoordinator
+from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,11 +17,11 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AndersenEvConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Andersen EV solar number entities."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     entities = []
     for device in coordinator.data:
@@ -52,10 +51,10 @@ class AndersenEvSolarMaxGridChargeNumber(CoordinatorEntity, NumberEntity):  # py
             "model": "A2",
         }
         self._attr_icon = "mdi:solar-power-box"
-        self._attr_min_value = 0.0
-        self._attr_max_value = 100.0
-        self._attr_step = 1.0
-        self._attr_unit_of_measurement = "%"
+        self._attr_native_min_value = 0.0
+        self._attr_native_max_value = 100.0
+        self._attr_native_step = 1.0
+        self._attr_native_unit_of_measurement = "%"
         self._attr_native_value = None
 
     def _update_model_from_device_status(self):
@@ -110,7 +109,9 @@ class AndersenEvSolarMaxGridChargeNumber(CoordinatorEntity, NumberEntity):  # py
                 # Update local solar status immediately
                 if self._device._last_solar_status is None:
                     self._device._last_solar_status = {}
-                self._device._last_solar_status["solarMaxGridChargePercent"] = int(value)
+                self._device._last_solar_status["solarMaxGridChargePercent"] = int(
+                    value
+                )
 
                 # Force the entity to update its state immediately
                 self._attr_native_value = float(value)

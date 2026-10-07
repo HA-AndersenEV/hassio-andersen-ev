@@ -21,6 +21,7 @@ class KonnectDevice:
     user_lock: bool = False
     _last_status: dict[str, Any] | None = None
     _last_charge: dict[str, Any] | None = None
+    _last_solar_status: dict[str, Any] | None = None
     model_name: str | None = None
     currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
@@ -33,6 +34,7 @@ class KonnectDevice:
         self.user_lock = user_lock
         self._last_status = None
         self._last_charge = None
+        self._last_solar_status = None
         self.model_name = None
         self.currency = None
         self._graphql_client = None
@@ -42,6 +44,11 @@ class KonnectDevice:
     def last_status(self):
         """Return the last known device status."""
         return self._last_status
+
+    @property
+    def last_solar_status(self):
+        """Return the last known solar status."""
+        return self._last_solar_status or {}
 
     @property
     def last_charge(self):
@@ -353,11 +360,12 @@ class KonnectDevice:
             )
             return None
 
-        return {
+        self._last_solar_status = {
             "solarOverride": status.get("solarOverride"),
             "solarChargeAlways": status.get("solarChargeAlways"),
             "solarMaxGridChargePercent": status.get("solarMaxGridChargePercent"),
         }
+        return self._last_solar_status
 
     async def set_solar(
         self,
