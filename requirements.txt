@@ -1,2 +1,2 @@
 pycognito==2024.5.1
-gql[aiohttp]>=3.5.3
+gql[aiohttp]>=4.4.0

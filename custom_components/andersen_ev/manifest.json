@@ -15,7 +15,7 @@
   "quality_scale": "gold",
   "requirements": [
     "pycognito",
-    "gql[aiohttp]",
+    "gql[aiohttp]>=4.4.0",
     "boto3"
   ],
   "single_config_entry": true,

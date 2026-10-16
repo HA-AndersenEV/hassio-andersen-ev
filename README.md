@@ -18,7 +18,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
   * **Supplement with grid power** switch.
   * **Grid source power** number (kW).
   * **Charge outside schedule** switch.
-  * **Boost** switch (disabled by default).
+  * **Boost** switch.
 * **Max system charge current** diagnostic sensor (the charger's configured maximum current, in A).
 * Provides services to:
   * Disable all charging schedules: `andersen_ev.disable_all_schedules`
@@ -170,7 +170,7 @@ These entities mirror the **Power source** screen in the Konnect+ app:
 | Supplement with grid power | Switch | Lets the charger top up solar with grid power, up to the grid source power. |
 | Grid source power | Number (kW) | The minimum charge rate during schedule times, made up from grid power when there isn't enough solar. For example, 3.6 kW with 2 kW of solar charges at 2 kW solar plus 1.6 kW grid. |
 | Charge outside schedule | Switch | Allows solar charging outside your charging schedules. |
-| Boost | Switch | Ignores the solar settings and charges at the maximum rate. Andersen limits a boost to about 2 hours, after which the solar settings resume. Disabled by default. |
+| Boost | Switch | Ignores the solar settings and charges at the maximum rate. Andersen limits a boost to about 2 hours, after which the solar settings resume. |
 | Max system charge current | Sensor (A) | The charger's configured maximum current (`cfgChargeAmpMax`). Grid source power is calculated from it. |
 
 **Grid source power and the API.** Andersen's API stores grid source power as a percentage of the

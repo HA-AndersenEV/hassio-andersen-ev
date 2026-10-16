@@ -7,7 +7,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from gql.transport.exceptions import TransportQueryError, TransportServerError
+from gql.transport.exceptions import TransportConnectionFailed, TransportQueryError, TransportServerError
 
 from andersen_ev.konnect.graphql_client import GraphQLClient
 
@@ -259,9 +259,16 @@ class TestGraphQLClient:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_network_exception(self):
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(ConnectionError("Network error"), id="os_error"),
+            pytest.param(TransportConnectionFailed("Network error"), id="transport_connection_failed"),
+        ],
+    )
+    async def test_network_exception(self, error):
         """Test network exceptions return None."""
-        mock_client, _ = self._make_mock_client(execute_side_effect=ConnectionError("Network error"))
+        mock_client, _ = self._make_mock_client(execute_side_effect=error)
 
         with patch(
             "andersen_ev.konnect.graphql_client.Client",
@@ -275,6 +282,30 @@ class TestGraphQLClient:
             await client.close()
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_401_retry_connection_failed(self):
+        """Test a connection failure on the retry after refresh returns None."""
+        mock_client, mock_session = self._make_mock_client(
+            execute_side_effect=[
+                TransportServerError("Unauthorized", code=401),
+                TransportConnectionFailed("Network error"),
+            ]
+        )
+
+        with patch(
+            "andersen_ev.konnect.graphql_client.Client",
+            return_value=mock_client,
+        ):
+            client = GraphQLClient(
+                token="test_token",
+                token_refresh=self._dummy_refresh(),
+            )
+            result = await client.execute_query("test", "query { test }")
+            await client.close()
+
+        assert result is None
+        assert mock_session.execute.call_count == 2
 
     # -- mutation tests ----------------------------------------------------
 
