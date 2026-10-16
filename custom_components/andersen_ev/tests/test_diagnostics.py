@@ -30,8 +30,8 @@ class TestAsyncGetConfigEntryDiagnostics:
     @pytest.mark.asyncio
     async def test_sensitive_fields_are_redacted(self, mock_device, mock_api):
         mock_api.email = "secret@example.com"
-        mock_api.refreshToken = "refresh-secret"
-        mock_api.deviceKey = "device-key-secret"
+        mock_api.refresh_token_value = "refresh-secret"
+        mock_api.device_key = "device-key-secret"
         entry = _make_entry([mock_device])
 
         result = await async_get_config_entry_diagnostics(MagicMock(), entry)

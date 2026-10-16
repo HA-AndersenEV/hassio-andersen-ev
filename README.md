@@ -13,6 +13,13 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 ## Features
 * Switch entities for each charging schedule allows enabling/disabling charge schedules.
 * Lock entity to enable or disable the charge point.
+* Solar charging controls matching the Konnect+ app's Power source screen (see
+  [Solar charging controls](#solar-charging-controls)):
+  * **Supplement with grid power** switch.
+  * **Grid source power** number (kW).
+  * **Charge outside schedule** switch.
+  * **Boost** switch (disabled by default).
+* **Max system charge current** diagnostic sensor (the charger's configured maximum current, in A).
 * Provides services to:
   * Disable all charging schedules: `andersen_ev.disable_all_schedules`
   * Get detailed device information: `andersen_ev.get_device_info` (results displayed in UI)
@@ -105,6 +112,8 @@ service calls. In short:
 * A **lock** entity per charger to enable/disable charging (`userLock`/`userUnlock`).
 * A **switch** entity per charging schedule slot, so each schedule can be turned on or off
   independently.
+* **Solar charging** switches and a grid source power number, mirroring the app's Power source
+  screen.
 * **Sensors** for energy, cost, live grid/solar/charge power, voltage, temperature, fault code and
   connector state, sourced from the charger's historical and live status data.
 * **Services** to disable all schedules, reset an RCM fault, and pull a one-off detailed device
@@ -152,6 +161,40 @@ triggers:
 
 Also note that a condition such as "only if unlocked" is false while a command is pending.
 
+### Solar charging controls
+
+These entities mirror the **Power source** screen in the Konnect+ app:
+
+| Entity | Type | What it does |
+|---|---|---|
+| Supplement with grid power | Switch | Lets the charger top up solar with grid power, up to the grid source power. |
+| Grid source power | Number (kW) | The minimum charge rate during schedule times, made up from grid power when there isn't enough solar. For example, 3.6 kW with 2 kW of solar charges at 2 kW solar plus 1.6 kW grid. |
+| Charge outside schedule | Switch | Allows solar charging outside your charging schedules. |
+| Boost | Switch | Ignores the solar settings and charges at the maximum rate. Andersen limits a boost to about 2 hours, after which the solar settings resume. Disabled by default. |
+| Max system charge current | Sensor (A) | The charger's configured maximum current (`cfgChargeAmpMax`). Grid source power is calculated from it. |
+
+**Grid source power and the API.** Andersen's API stores grid source power as a percentage of the
+charger's maximum power, not in kW. The integration converts between the two:
+
+* Maximum power is max system charge current × 0.225, rounded to the nearest 0.1 kW. For a 32 A
+  charger this is 7.2 kW, which is also the highest grid source power you can set.
+* The kW value you set is converted to a whole percentage of that maximum, so the value read back
+  can differ slightly from what you entered.
+
+**Rules the integration follows.** These match what the app does, because the API doesn't apply
+the settings reliably otherwise:
+
+* Grid source power must be **0 or at least 1.4 kW**. The app says solar charging isn't permitted
+  below 1.4 kW. A value between 0 and 1.4 kW is set to 0 and a warning is logged.
+* Turning **Supplement with grid power off** also sets grid source power to 0.
+* Turning **Supplement with grid power on** restores the grid source power you had before it was
+  turned off. If there was no earlier value, or it was below 1.4 kW, it uses 1.4 kW. The earlier
+  value is kept across Home Assistant restarts.
+* Setting **grid source power** to 1.4 kW or more turns Supplement with grid power on, and
+  setting it to 0 turns it off.
+
+Unlike the app, the integration doesn't limit grid source power to 0.2 kW steps.
+
 If a poll fails, the integration keeps showing the last-known good data instead of immediately
 marking entities unavailable, so a brief cloud hiccup doesn't blank your dashboard. Entities are
 only marked unavailable once polling has failed for a device with no prior cached data.
@@ -170,6 +213,12 @@ only marked unavailable once polling has failed for a device with no prior cache
 * **Grid power sensors are a workaround, not a replacement for a smart meter integration.** They're
   intended for those without a smart meter connected to Home Assistant already (see
   [Features](#features)) - accuracy depends entirely on what the charger itself reports.
+* **Grid source power uses the charger's configured maximum current, not your own limit.**
+  The integration calculates maximum power from max system charge current (`cfgChargeAmpMax`).
+  The app uses the maximum you've set yourself in the app's power settings
+  (`sysUserMaxChargeAmpSet`) if there is one. If you've lowered that limit, Home Assistant shows a higher
+  kW value than the app for the same setting, and a kW value set in Home Assistant gives a lower
+  charge rate than the same value set in the app.
 * **Fault codes are raw values.** The fault code sensor exposes whatever numeric/string code the
   charger reports, with no built-in lookup table translating codes to human-readable descriptions.
 

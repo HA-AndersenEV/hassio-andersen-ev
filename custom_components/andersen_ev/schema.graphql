@@ -227,7 +227,6 @@ type SolarSettings {
   override: Boolean
   chargeAlways: Boolean
   maxGridChargePercent: Int
-  chargeOutsideSchedules: Boolean
   return_value: Int
 }
 

@@ -457,8 +457,10 @@ class TestDSLSchema:
         # Query.getSolar and Mutation.setSolar should exist
         assert hasattr(ds.Query, "getSolar")
         assert hasattr(ds.Mutation, "setSolar")
-        # SolarSettings type should have the new field
-        assert hasattr(ds.SolarSettings, "chargeOutsideSchedules")
+        # SolarSettings type should have the expected fields
+        assert hasattr(ds.SolarSettings, "override")
+        assert hasattr(ds.SolarSettings, "chargeAlways")
+        assert hasattr(ds.SolarSettings, "maxGridChargePercent")
 
     def test_returns_cached_instance(self):
         """Test that get_dsl_schema returns the same cached instance."""

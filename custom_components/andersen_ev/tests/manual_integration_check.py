@@ -63,7 +63,7 @@ async def run(email: str, password: str, target_device_id: str | None) -> bool:
     _LOGGER.info("Authenticating as %s ...", email)
     client = KonnectClient(email, password)
     await client.authenticate_user()
-    _LOGGER.info("Authenticated — token expires in ~%ss", client.tokenExpiresIn)
+    _LOGGER.info("Authenticated — token expires in ~%ss", client.token_expires_in)
 
     # -- discover devices --------------------------------------------------
     _LOGGER.info("Fetching device list ...")
@@ -131,19 +131,19 @@ async def run(email: str, password: str, target_device_id: str | None) -> bool:
         _pp("Original solar settings (saved)", original)
 
         # Build modified values — flip booleans, nudge the percentage
-        modified_override = not original.get("solarOverride", False)
+        modified_boost = not original.get("boost", False)
         modified_charge_always = not original.get("solarChargeAlways", False)
         orig_pct = original.get("solarMaxGridChargePercent", 50)
         modified_pct = 25 if orig_pct != 25 else 75
 
         _LOGGER.info(
-            "Writing MODIFIED solar settings: override=%s, charge_always=%s, max_grid_charge_percent=%s",
-            modified_override,
+            "Writing MODIFIED solar settings: boost=%s, charge_always=%s, max_grid_charge_percent=%s",
+            modified_boost,
             modified_charge_always,
             modified_pct,
         )
         ok = await device.set_solar(
-            override=modified_override,
+            boost=modified_boost,
             charge_always=modified_charge_always,
             max_grid_charge_percent=modified_pct,
         )
@@ -162,7 +162,7 @@ async def run(email: str, password: str, target_device_id: str | None) -> bool:
 
             # Verify modified values took effect
             expected_modify = {
-                "solarOverride": modified_override,
+                "boost": modified_boost,
                 "solarChargeAlways": modified_charge_always,
                 "solarMaxGridChargePercent": modified_pct,
             }
@@ -180,7 +180,7 @@ async def run(email: str, password: str, target_device_id: str | None) -> bool:
             # Restore original values
             _LOGGER.info("Restoring original solar settings ...")
             ok = await device.set_solar(
-                override=original.get("solarOverride"),
+                boost=original.get("boost"),
                 charge_always=original.get("solarChargeAlways"),
                 max_grid_charge_percent=original.get("solarMaxGridChargePercent"),
             )

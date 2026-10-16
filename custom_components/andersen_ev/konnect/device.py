@@ -1,7 +1,5 @@
 """Konnect device interface for Andersen EV chargers."""
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +21,9 @@ class KonnectDevice:
     user_lock: bool = False
     _last_status: dict[str, Any] | None = None
     _last_charge: dict[str, Any] | None = None
+    _last_solar_status: dict[str, Any] | None = None
+    # Restored when grid supplement is turned back on, since turning it off zeroes the percent.
+    last_grid_charge_percent: int | None = None
     model_name: str | None = None
     currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
@@ -35,6 +36,8 @@ class KonnectDevice:
         self.user_lock = user_lock
         self._last_status = None
         self._last_charge = None
+        self._last_solar_status = None
+        self.last_grid_charge_percent = None
         self.model_name = None
         self.currency = None
         self._graphql_client = None
@@ -44,6 +47,17 @@ class KonnectDevice:
     def last_status(self):
         """Return the last known device status."""
         return self._last_status
+
+    @property
+    def last_solar_status(self):
+        """Return the last known solar status."""
+        return self._last_solar_status or {}
+
+    def update_solar_status_cache(self, changes: dict[str, Any]) -> None:
+        """Merge locally applied solar changes into the cached solar status."""
+        if self._last_solar_status is None:
+            self._last_solar_status = {}
+        self._last_solar_status.update(changes)
 
     @property
     def last_charge(self):
@@ -58,14 +72,14 @@ class KonnectDevice:
             self._graphql_client = GraphQLClient(
                 token=self.api.token,
                 token_refresh=self._refresh_graphql_token,
-                token_expiry_time=getattr(self.api, "tokenExpiryTime", None),
+                token_expiry_time=getattr(self.api, "token_expiry_time", None),
             )
         return self._graphql_client
 
     async def _refresh_graphql_token(self):
         """Refresh authentication and return new token with expiry time."""
         await self.api.refresh_token()
-        return self.api.token, getattr(self.api, "tokenExpiryTime", None)
+        return self.api.token, getattr(self.api, "token_expiry_time", None)
 
     async def close(self):
         """Clean up the GraphQL client resources."""
@@ -74,17 +88,33 @@ class KonnectDevice:
 
     async def reset_rcm(self):
         """Reset RCM fault on the device."""
-        _LOGGER.debug("Attempting to reset RCM for device %s (%s)", self.device_id, self.friendly_name)
+        _LOGGER.debug(
+            "Attempting to reset RCM for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
         success = await self._run_command("rcmReset")
         if success:
-            _LOGGER.debug("Successfully reset RCM for device %s (%s)", self.device_id, self.friendly_name)
+            _LOGGER.debug(
+                "Successfully reset RCM for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
         else:
-            _LOGGER.warning("Failed to reset RCM for device %s (%s)", self.device_id, self.friendly_name)
+            _LOGGER.warning(
+                "Failed to reset RCM for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
         return success
 
     async def enable(self):
         """Enable charging by unlocking user lock."""
-        _LOGGER.debug("Attempting to enable charging for device %s (%s)", self.device_id, self.friendly_name)
+        _LOGGER.debug(
+            "Attempting to enable charging for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
         success = await self._run_command("userUnlock")
         if success:
             _LOGGER.debug(
@@ -93,12 +123,20 @@ class KonnectDevice:
                 self.friendly_name,
             )
         else:
-            _LOGGER.warning("Failed to enable charging for device %s (%s)", self.device_id, self.friendly_name)
+            _LOGGER.warning(
+                "Failed to enable charging for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
         return success
 
     async def disable(self):
         """Disable charging by locking user lock."""
-        _LOGGER.debug("Attempting to disable charging for device %s (%s)", self.device_id, self.friendly_name)
+        _LOGGER.debug(
+            "Attempting to disable charging for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
         success = await self._run_command("userLock")
         if success:
             _LOGGER.debug(
@@ -107,12 +145,20 @@ class KonnectDevice:
                 self.friendly_name,
             )
         else:
-            _LOGGER.warning("Failed to disable charging for device %s (%s)", self.device_id, self.friendly_name)
+            _LOGGER.warning(
+                "Failed to disable charging for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
         return success
 
     async def disable_all_schedules(self):
         """Disable all charging schedules for the device."""
-        _LOGGER.debug("Attempting to disable all schedules for device %s (%s)", self.device_id, self.friendly_name)
+        _LOGGER.debug(
+            "Attempting to disable all schedules for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
 
         mutation = (
             "mutation setAllSchedulesDisabled($deviceId: ID!)"
@@ -155,7 +201,11 @@ class KonnectDevice:
 
     async def get_detailed_device_status(self):
         """Get the detailed status of the device."""
-        _LOGGER.debug("Fetching detailed status for device %s (%s)", self.device_id, self.friendly_name)
+        _LOGGER.debug(
+            "Fetching detailed status for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
 
         result = await self.graphql_client.execute_query(
             operation_name="getDeviceStatus",
@@ -203,6 +253,46 @@ class KonnectDevice:
                     self.friendly_name,
                     self._last_status["online"],
                     status["online"],
+                )
+                log_changes = True
+
+        if "solarChargeAlways" in status and "solarChargeAlways" in self._last_status:
+            if status["solarChargeAlways"] != self._last_status["solarChargeAlways"]:
+                _LOGGER.info(
+                    "Device %s: Solar charge always changed from %s to %s",
+                    self.friendly_name,
+                    self._last_status["solarChargeAlways"],
+                    status["solarChargeAlways"],
+                )
+                log_changes = True
+
+        if "solarOverride" in status and "solarOverride" in self._last_status:
+            if status["solarOverride"] != self._last_status["solarOverride"]:
+                _LOGGER.info(
+                    "Device %s: Boost changed from %s to %s",
+                    self.friendly_name,
+                    self._last_status["solarOverride"],
+                    status["solarOverride"],
+                )
+                log_changes = True
+
+        if "sysScheduleLock" in status and "sysScheduleLock" in self._last_status:
+            if status["sysScheduleLock"] != self._last_status["sysScheduleLock"]:
+                _LOGGER.info(
+                    "Device %s: System schedule lock changed from %s to %s",
+                    self.friendly_name,
+                    self._last_status["sysScheduleLock"],
+                    status["sysScheduleLock"],
+                )
+                log_changes = True
+
+        if "solarMaxGridChargePercent" in status and "solarMaxGridChargePercent" in self._last_status:
+            if status["solarMaxGridChargePercent"] != self._last_status["solarMaxGridChargePercent"]:
+                _LOGGER.info(
+                    "Device %s: Solar max grid charge percent changed from %s to %s",
+                    self.friendly_name,
+                    self._last_status["solarMaxGridChargePercent"],
+                    status["solarMaxGridChargePercent"],
                 )
                 log_changes = True
 
@@ -264,16 +354,29 @@ class KonnectDevice:
             )
             return None
 
-        return {
-            "solarOverride": status.get("solarOverride"),
+        return self.update_solar_status_from_device_status(status)
+
+    def update_solar_status_from_device_status(self, status: dict[str, Any]) -> dict[str, Any]:
+        """Populate the solar settings cache from an already-fetched device status."""
+        # The API only exposes this as sysScheduleLock, which is the inverse of "charge outside schedule".
+        schedule_lock = status.get("sysScheduleLock")
+        self._last_solar_status = {
+            "boost": status.get("solarOverride"),
             "solarChargeAlways": status.get("solarChargeAlways"),
             "solarMaxGridChargePercent": status.get("solarMaxGridChargePercent"),
+            "solarChargeOutsideSchedules": None if schedule_lock is None else not schedule_lock,
         }
+        self._remember_grid_charge_percent(status.get("solarMaxGridChargePercent"))
+        return self._last_solar_status
+
+    def _remember_grid_charge_percent(self, percent: int | None) -> None:
+        if percent:
+            self.last_grid_charge_percent = percent
 
     async def set_solar(
         self,
         *,
-        override: bool | None = None,
+        boost: bool | None = None,
         charge_always: bool | None = None,
         max_grid_charge_percent: int | None = None,
         charge_outside_schedules: bool | None = None,
@@ -283,20 +386,17 @@ class KonnectDevice:
         Only the provided (non-None) parameters are sent to the API.
         """
         _LOGGER.debug(
-            "Setting solar options for device %s (%s): "
-            "override=%s, charge_always=%s, max_grid_charge_percent=%s, "
-            "charge_outside_schedules=%s",
+            "Setting solar options for device %s (%s): boost=%s, charge_always=%s, max_grid_charge_percent=%s",
             self.device_id,
             self.friendly_name,
-            override,
+            boost,
             charge_always,
             max_grid_charge_percent,
-            charge_outside_schedules,
         )
 
         fields: dict[str, object] = {}
-        if override is not None:
-            fields["override"] = override
+        if boost is not None:
+            fields["override"] = boost
         if charge_always is not None:
             fields["chargeAlways"] = charge_always
         if max_grid_charge_percent is not None:
@@ -304,11 +404,18 @@ class KonnectDevice:
         if charge_outside_schedules is not None:
             fields["chargeOutsideSchedules"] = charge_outside_schedules
 
-        return await self.graphql_client.set_solar(self.device_id, fields)
+        success = await self.graphql_client.set_solar(self.device_id, fields)
+        if success:
+            self._remember_grid_charge_percent(max_grid_charge_percent)
+        return success
 
     async def get_device_info(self):
         """Get the detailed device information."""
-        _LOGGER.debug("Fetching detailed info for device %s (%s)", self.device_id, self.friendly_name)
+        _LOGGER.debug(
+            "Fetching detailed info for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
 
         result = await self.graphql_client.execute_query(
             operation_name="getDevice",

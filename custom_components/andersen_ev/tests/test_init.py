@@ -46,6 +46,7 @@ def _make_device(device_id="device_1", friendly_name="Device", user_lock=False):
     device.status_available = None
     device.get_detailed_device_status = AsyncMock(return_value={"online": True})
     device.get_last_charge = AsyncMock(return_value={"chargeEnergyTotal": 1.0})
+    device.get_solar = AsyncMock()
     device.disable_all_schedules = AsyncMock()
     device.reset_rcm = AsyncMock()
     device.get_device_info = AsyncMock(return_value={"info": "data"})
@@ -105,6 +106,8 @@ class TestAsyncUpdateData:
 
         assert result == [device]
         device.get_detailed_device_status.assert_awaited_once()
+        device.update_solar_status_from_device_status.assert_called_once_with({"online": True})
+        device.get_solar.assert_not_awaited()
         device.get_last_charge.assert_awaited_once()
         assert device.status_available is True
         assert coordinator._device_availability[device.device_id] is True
@@ -491,7 +494,12 @@ class TestAsyncSetupEntry:
         hass.config_entries.async_forward_entry_setups.assert_awaited_once()
         call_args = hass.config_entries.async_forward_entry_setups.call_args.args
         assert call_args[0] is entry
-        assert list(call_args[1]) == [Platform.LOCK, Platform.SENSOR, Platform.SWITCH]
+        assert list(call_args[1]) == [
+            Platform.LOCK,
+            Platform.NUMBER,
+            Platform.SENSOR,
+            Platform.SWITCH,
+        ]
 
 
 class TestAsyncUnloadEntry:

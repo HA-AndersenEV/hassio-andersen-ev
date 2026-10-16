@@ -10,6 +10,7 @@
       "sys_voltage": { "default": "mdi:transmission-tower" },
       "sys_fault_code": { "default": "mdi:exclamation" },
       "sys_grid_energy_delta": { "default": "mdi:transmission-tower" },
+      "max_system_charge_current": { "default": "mdi:current-ac" },
       "cost": { "default": "mdi:currency-gbp" },
       "grid_cost": { "default": "mdi:cash-multiple" },
       "solar_cost": { "default": "mdi:solar-power-variant" },

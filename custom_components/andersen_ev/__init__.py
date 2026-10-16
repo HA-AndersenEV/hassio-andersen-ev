@@ -26,32 +26,11 @@ from .konnect.client import KonnectClient
 from .konnect.device import KonnectDevice
 from .konnect.exceptions import AndersenApiError, AndersenAuthError, AndersenError
 
-PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [Platform.LOCK, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 type AndersenEvConfigEntry = ConfigEntry[AndersenEvCoordinator]
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _make_stale_device_listener(hass: HomeAssistant, coordinator: "AndersenEvCoordinator"):
-    """Build a coordinator listener that removes devices no longer returned by the API.
-
-    Compares the device_id set on each coordinator refresh against the previous one; any
-    device_id that drops out gets its device-registry entry removed. Runs once (not per
-    platform) since it acts on the registry, not entities.
-    """
-    device_registry = dr.async_get(hass)
-    known_device_ids = {device.device_id for device in coordinator.data}
-
-    def _handle_stale_devices() -> None:
-        current_device_ids = {device.device_id for device in coordinator.data}
-        for device_id in known_device_ids - current_device_ids:
-            if device_entry := device_registry.async_get_device(identifiers={(DOMAIN, device_id)}):
-                device_registry.async_remove_device(device_entry.id)
-        known_device_ids.clear()
-        known_device_ids.update(current_device_ids)
-
-    return _handle_stale_devices
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:
@@ -153,7 +132,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
     # Register services using simpler schema
     service_schema = vol.Schema({vol.Required(ATTR_DEVICE_ID): str})
 
-    hass.services.async_register(DOMAIN, SERVICE_DISABLE_ALL_SCHEDULES, disable_all_schedules, schema=service_schema)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DISABLE_ALL_SCHEDULES,
+        disable_all_schedules,
+        schema=service_schema,
+    )
 
     # Register the get_device_info service with response support
     hass.services.async_register(
@@ -182,7 +166,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
 
 async def async_unload_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:
     """Unload a config entry."""
-    await asyncio.gather(*(device.close() for device in entry.runtime_data.devices), return_exceptions=True)
+    await asyncio.gather(
+        *(device.close() for device in entry.runtime_data.devices),
+        return_exceptions=True,
+    )
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
@@ -261,7 +248,10 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         # Fetch status for each device
         for device in self.devices:
             _LOGGER.debug(
-                "Device ID: %s, Name: %s, User Lock: %s", device.device_id, device.friendly_name, device.user_lock
+                "Device ID: %s, Name: %s, User Lock: %s",
+                device.device_id,
+                device.friendly_name,
+                device.user_lock,
             )
             try:
                 status = await device.get_detailed_device_status()
@@ -273,6 +263,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 self._mark_device_unavailable(device, "no status returned")
                 continue
 
+            device.update_solar_status_from_device_status(status)
             device.status_available = True
             if self._device_availability.get(device.device_id) is False:
                 _LOGGER.info("Device %s is back online", device.friendly_name)
@@ -293,3 +284,24 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         else:
             _LOGGER.debug("Device %s still unavailable: %s", device.friendly_name, error)
         self._device_availability[device.device_id] = False
+
+
+def _make_stale_device_listener(hass: HomeAssistant, coordinator: AndersenEvCoordinator):
+    """Build a coordinator listener that removes devices no longer returned by the API.
+
+    Compares the device_id set on each coordinator refresh against the previous one; any
+    device_id that drops out gets its device-registry entry removed. Runs once (not per
+    platform) since it acts on the registry, not entities.
+    """
+    device_registry = dr.async_get(hass)
+    known_device_ids = {device.device_id for device in coordinator.data}
+
+    def _handle_stale_devices() -> None:
+        current_device_ids = {device.device_id for device in coordinator.data}
+        for device_id in known_device_ids - current_device_ids:
+            if device_entry := device_registry.async_get_device(identifiers={(DOMAIN, device_id)}):
+                device_registry.async_remove_device(device_entry.id)
+        known_device_ids.clear()
+        known_device_ids.update(current_device_ids)
+
+    return _handle_stale_devices

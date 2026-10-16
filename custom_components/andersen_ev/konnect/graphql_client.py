@@ -57,6 +57,10 @@ def get_dsl_schema() -> DSLSchema:
     return DSLSchema(schema)
 
 
+# Preload schema at module import time to avoid blocking I/O in async context
+_PRELOADED_SCHEMA = get_dsl_schema()
+
+
 class GraphQLClient:
     """Async GraphQL client for Andersen EV API using gql[aiohttp].
 

@@ -1,7 +1,5 @@
 """Sensor platform for Andersen EV."""
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -13,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
@@ -31,6 +30,16 @@ from .entity import AndersenEvDeviceInfoMixin
 PARALLEL_UPDATES = 0
 
 _LOGGER = logging.getLogger(__name__)
+
+CONNECTOR_STATE_OPTIONS = [
+    "Ready",
+    "Connected",
+    "Charging",
+    "Error",
+    "Sleeping",
+    "Disabled",
+    "unknown",
+]
 
 
 async def async_setup_entry(
@@ -154,6 +163,18 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
             UnitOfEnergy.KILO_WATT_HOUR,
             entity_category=EntityCategory.DIAGNOSTIC,
             enabled_default=False,
+        )
+    )
+    entities.append(
+        AndersenEvLiveSensor(
+            coordinator,
+            device,
+            "max_system_charge_current",
+            "cfgChargeAmpMax",
+            SensorDeviceClass.CURRENT,
+            None,
+            UnitOfElectricCurrent.AMPERE,
+            entity_category=EntityCategory.DIAGNOSTIC,
         )
     )
 
@@ -297,7 +318,7 @@ def _session_start_as_local(start: Any) -> datetime | None:
         return None
     try:
         parsed = dt_util.parse_datetime(start)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if parsed is None:
         return None
@@ -400,17 +421,7 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
     """Sensor for Andersen EV connector state."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    # Not ClassVar: SensorEntity itself declares _attr_options as an instance
-    # variable, so a ClassVar override here would conflict with mypy's override check.
-    _attr_options: list[str] = [  # noqa: RUF012
-        "Ready",
-        "Connected",
-        "Charging",
-        "Error",
-        "Sleeping",
-        "Disabled",
-        "unknown",
-    ]
+    _attr_options = CONNECTOR_STATE_OPTIONS
 
     _attr_has_entity_name = True
     _attr_translation_key = "connector"
@@ -466,17 +477,17 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
                     self._last_evse_state = evse_state
 
                 # Map evseState values to connector states
-                if evse_state == "1" or evse_state == 1:
+                if evse_state in ("1", 1):
                     self._connector_state = "Ready"
-                elif evse_state == "2" or evse_state == 2:
+                elif evse_state in ("2", 2):
                     self._connector_state = "Connected"
-                elif evse_state == "3" or evse_state == 3:
+                elif evse_state in ("3", 3):
                     self._connector_state = "Charging"
-                elif evse_state == "4" or evse_state == 4:
+                elif evse_state in ("4", 4):
                     self._connector_state = "Error"
-                elif evse_state == "254" or evse_state == 254:
+                elif evse_state in ("254", 254):
                     self._connector_state = "Sleeping"
-                elif evse_state == "255" or evse_state == 255:
+                elif evse_state in ("255", 255):
                     self._connector_state = "Disabled"
                 else:
                     # Log unknown states for debugging

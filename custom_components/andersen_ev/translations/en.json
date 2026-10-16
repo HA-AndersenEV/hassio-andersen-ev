@@ -46,6 +46,7 @@
       "sys_voltage": { "name": "System Voltage" },
       "sys_fault_code": { "name": "Fault Code" },
       "sys_grid_energy_delta": { "name": "System Grid Energy Delta" },
+      "max_system_charge_current": { "name": "Max system charge current" },
       "cost": { "name": "Total Cost" },
       "grid_cost": { "name": "Grid Cost" },
       "solar_cost": { "name": "Solar Cost" },
@@ -61,10 +62,16 @@
       "session_start": { "name": "Session Start Time" }
     },
     "switch": {
-      "schedule": { "name": "Schedule {index}" }
+      "schedule": { "name": "Schedule {index}" },
+      "boost": { "name": "Boost" },
+      "solar_charge_always": { "name": "Supplement with grid power" },
+      "solar_charge_outside_schedules": { "name": "Charge outside schedule" }
     },
     "lock": {
       "lock": { "name": "Lock" }
+    },
+    "number": {
+      "grid_source_power": { "name": "Grid source power" }
     }
   },
   "exceptions": {
@@ -76,7 +83,9 @@
     "schedule_data_unavailable": { "message": "Failed to retrieve schedule data for {device_name}" },
     "schedule_update_failed": { "message": "Failed to update schedule for {device_name}" },
     "schedule_index_out_of_range": { "message": "Schedule index {index} is out of range for {device_name}" },
-    "schedule_update_error": { "message": "Failed to update schedule for {device_name}: {error}" }
+    "schedule_update_error": { "message": "Failed to update schedule for {device_name}: {error}" },
+    "solar_update_failed": { "message": "Failed to update {setting} for {device_name}" },
+    "solar_update_error": { "message": "Failed to update {setting} for {device_name}: {error}" }
   },
   "issues": {
     "api_shape_changed": {

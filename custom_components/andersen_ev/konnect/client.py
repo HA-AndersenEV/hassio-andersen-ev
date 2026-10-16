@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Authentication client for the Andersen Konnect cloud API."""
 
 import asyncio
 import logging
@@ -21,26 +21,29 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class KonnectClient:
+    """Authenticate with AWS Cognito and access the Konnect API."""
+
     email: str
     username: str | None = None
     password: str
 
     token: str | None = None
-    tokenType: str | None = None
-    tokenExpiresIn: int | None = None
-    tokenExpiryTime: float | None = None  # New field to track token expiration time
-    refreshToken: str | None = None
-    deviceKey: str | None = None
+    token_type: str | None = None
+    token_expires_in: int | None = None
+    token_expiry_time: float | None = None  # New field to track token expiration time
+    refresh_token_value: str | None = None
+    device_key: str | None = None
 
-    def __init__(self, email, password):
+    def __init__(self, email, password) -> None:
+        """Initialize the client."""
         self.email = email
         self.password = password
         self.token = None
-        self.tokenType = None
-        self.tokenExpiresIn = None
-        self.tokenExpiryTime = None
-        self.refreshToken = None  # Keeping property for compatibility with storage
-        self.deviceKey = None
+        self.token_type = None
+        self.token_expires_in = None
+        self.token_expiry_time = None
+        self.refresh_token_value = None  # Keeping property for compatibility with storage
+        self.device_key = None
 
     async def authenticate_user(self):
         """Authenticate with AWS Cognito using SRP."""
@@ -58,12 +61,12 @@ class KonnectClient:
 
             aws_result = aws_response["AuthenticationResult"]
             self.token = aws_result["IdToken"]
-            self.tokenType = aws_result["TokenType"]
-            self.tokenExpiresIn = aws_result["ExpiresIn"]
+            self.token_type = aws_result["TokenType"]
+            self.token_expires_in = aws_result["ExpiresIn"]
             # Calculate absolute expiry time (subtract 90 seconds for safety margin)
-            self.tokenExpiryTime = time.time() + aws_result["ExpiresIn"] - 90
-            self.refreshToken = aws_result["RefreshToken"]
-            self.deviceKey = device_key
+            self.token_expiry_time = time.time() + aws_result["ExpiresIn"] - 90
+            self.refresh_token_value = aws_result["RefreshToken"]
+            self.device_key = device_key
 
             if device_key:
                 _LOGGER.debug(
@@ -109,20 +112,25 @@ class KonnectClient:
                     device_key[-4:] if device_key and len(device_key) >= 4 else device_key,
                 )
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("Device confirmation failed (refresh may fall back to full auth): %s", err)
+                _LOGGER.warning(
+                    "Device confirmation failed (refresh may fall back to full auth): %s",
+                    err,
+                )
 
         return tokens, device_key
 
     async def refresh_token(self):
-        """Renew the id_token via REFRESH_TOKEN_AUTH (with DEVICE_KEY), falling
-        back to a full SRP login only if the refresh token is dead."""
-        if not self.refreshToken or not self.deviceKey:
+        """Renew the id_token via REFRESH_TOKEN_AUTH (with DEVICE_KEY).
+
+        Falls back to a full SRP login only if the refresh token is dead.
+        """
+        if not self.refresh_token_value or not self.device_key:
             _LOGGER.debug("No refresh token / device key; performing full authentication")
             await self.authenticate_user()
             return
         _LOGGER.debug(
             "Refreshing token via REFRESH_TOKEN_AUTH, device key ...%s",
-            self.deviceKey[-4:] if len(self.deviceKey) >= 4 else self.deviceKey,
+            self.device_key[-4:] if len(self.device_key) >= 4 else self.device_key,
         )
         try:
             result = await asyncio.get_event_loop().run_in_executor(None, self.__refresh_with_device_key)
@@ -134,13 +142,13 @@ class KonnectClient:
                 return
             raise
         self.token = result["IdToken"]
-        self.tokenType = result["TokenType"]
-        self.tokenExpiresIn = result["ExpiresIn"]
-        self.tokenExpiryTime = time.time() + result["ExpiresIn"] - 90
+        self.token_type = result["TokenType"]
+        self.token_expires_in = result["ExpiresIn"]
+        self.token_expiry_time = time.time() + result["ExpiresIn"] - 90
         # REFRESH_TOKEN_AUTH does not rotate the refresh token; keep the stored one
         # unless the response unexpectedly includes a new one.
         if "RefreshToken" in result:
-            self.refreshToken = result["RefreshToken"]
+            self.refresh_token_value = result["RefreshToken"]
         _LOGGER.debug(
             "Token refreshed via REFRESH_TOKEN_AUTH, expires in %s seconds (effective expiry %s)",
             result["ExpiresIn"],
@@ -153,21 +161,24 @@ class KonnectClient:
         response = client.initiate_auth(
             ClientId=CLIENT_ID,
             AuthFlow="REFRESH_TOKEN_AUTH",
-            AuthParameters={"REFRESH_TOKEN": self.refreshToken, "DEVICE_KEY": self.deviceKey},
+            AuthParameters={
+                "REFRESH_TOKEN": self.refresh_token_value,
+                "DEVICE_KEY": self.device_key,
+            },
         )
         return response["AuthenticationResult"]
 
     def _expiry_str(self):
         """Local-time string for the effective token expiry (includes the 90s safety margin)."""
-        if not self.tokenExpiryTime:
+        if not self.token_expiry_time:
             return "unknown"
-        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.tokenExpiryTime))
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.token_expiry_time))
 
     async def is_token_valid(self):
         """Check if the current token is still valid."""
-        if not self.token or not self.tokenExpiryTime:
+        if not self.token or not self.token_expiry_time:
             return False
-        return time.time() < self.tokenExpiryTime
+        return time.time() < self.token_expiry_time
 
     async def getDevices(self):
         """Get list of devices from the API."""
@@ -213,6 +224,7 @@ class KonnectClient:
         _LOGGER.debug("Found %s devices", len(response_body["devices"]))
 
         for device in response_body["devices"]:
+            _LOGGER.debug("device details: %s", device)
             # Use "Andersen" as default friendly name if not set or empty
             friendly_name = device.get("friendlyName") or "Andersen"
             devices.append(
@@ -254,6 +266,6 @@ class KonnectClient:
         else:
             _LOGGER.debug(
                 "Token still valid, expiry in %s seconds (effective expiry %s)",
-                int(self.tokenExpiryTime - time.time()) if self.tokenExpiryTime else "unknown",
+                int(self.token_expiry_time - time.time()) if self.token_expiry_time else "unknown",
                 self._expiry_str(),
             )
