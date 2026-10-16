@@ -404,8 +404,6 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
 class AndersenEvBoostSwitch(AndersenEvSolarSwitch):
     """Switch for boost (charge at max rate, ignoring solar settings)."""
 
-    _attr_entity_registry_enabled_default = False
-
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
         super().__init__(coordinator, device, "boost", "Boost")

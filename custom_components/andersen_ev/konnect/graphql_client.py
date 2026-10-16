@@ -13,6 +13,7 @@ from gql.client import AsyncClientSession
 from gql.dsl import DSLMutation, DSLSchema, dsl_gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.exceptions import (
+    TransportConnectionFailed,
     TransportQueryError,
     TransportServerError,
 )
@@ -203,7 +204,7 @@ class GraphQLClient:
                 return None
             _LOGGER.debug("Authentication error during %s, refreshing and retrying", label)
             return await self._refresh_and_retry(document, variable_values, wire_op_name, label)
-        except OSError as err:
+        except (TransportConnectionFailed, OSError) as err:
             _LOGGER.error("Error executing GraphQL %s: %s", label, err)
             return None
 
@@ -288,7 +289,7 @@ class GraphQLClient:
             await self._refresh_and_reconnect()
             assert self._session is not None
             return await self._session.execute(request)
-        except (TransportServerError, TransportQueryError, OSError) as retry_err:
+        except (TransportServerError, TransportQueryError, TransportConnectionFailed, OSError) as retry_err:
             _LOGGER.error(
                 "Retry after token refresh failed for %s: %s",
                 label,
