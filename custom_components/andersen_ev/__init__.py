@@ -33,31 +33,6 @@ type AndersenEvConfigEntry = ConfigEntry[AndersenEvCoordinator]
 _LOGGER = logging.getLogger(__name__)
 
 
-def _make_stale_device_listener(
-    hass: HomeAssistant, coordinator: AndersenEvCoordinator
-):
-    """Build a coordinator listener that removes devices no longer returned by the API.
-
-    Compares the device_id set on each coordinator refresh against the previous one; any
-    device_id that drops out gets its device-registry entry removed. Runs once (not per
-    platform) since it acts on the registry, not entities.
-    """
-    device_registry = dr.async_get(hass)
-    known_device_ids = {device.device_id for device in coordinator.data}
-
-    def _handle_stale_devices() -> None:
-        current_device_ids = {device.device_id for device in coordinator.data}
-        for device_id in known_device_ids - current_device_ids:
-            if device_entry := device_registry.async_get_device(
-                identifiers={(DOMAIN, device_id)}
-            ):
-                device_registry.async_remove_device(device_entry.id)
-        known_device_ids.clear()
-        known_device_ids.update(current_device_ids)
-
-    return _handle_stale_devices
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:
     """Set up Andersen EV from a config entry."""
     email = entry.data["email"]
@@ -332,3 +307,24 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 "Device %s still unavailable: %s", device.friendly_name, error
             )
         self._device_availability[device.device_id] = False
+
+
+def _make_stale_device_listener(hass: HomeAssistant, coordinator: AndersenEvCoordinator):
+    """Build a coordinator listener that removes devices no longer returned by the API.
+
+    Compares the device_id set on each coordinator refresh against the previous one; any
+    device_id that drops out gets its device-registry entry removed. Runs once (not per
+    platform) since it acts on the registry, not entities.
+    """
+    device_registry = dr.async_get(hass)
+    known_device_ids = {device.device_id for device in coordinator.data}
+
+    def _handle_stale_devices() -> None:
+        current_device_ids = {device.device_id for device in coordinator.data}
+        for device_id in known_device_ids - current_device_ids:
+            if device_entry := device_registry.async_get_device(identifiers={(DOMAIN, device_id)}):
+                device_registry.async_remove_device(device_entry.id)
+        known_device_ids.clear()
+        known_device_ids.update(current_device_ids)
+
+    return _handle_stale_devices
