@@ -47,9 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
 
     entry.runtime_data = coordinator
 
-    entry.async_on_unload(
-        coordinator.async_add_listener(_make_stale_device_listener(hass, coordinator))
-    )
+    entry.async_on_unload(coordinator.async_add_listener(_make_stale_device_listener(hass, coordinator)))
 
     # Register services
     async def disable_all_schedules(call: ServiceCall) -> None:
@@ -160,9 +158,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
     )
 
     # Register the reset_rcm service
-    hass.services.async_register(
-        DOMAIN, SERVICE_RCM_RESET, reset_rcm, schema=service_schema
-    )
+    hass.services.async_register(DOMAIN, SERVICE_RCM_RESET, reset_rcm, schema=service_schema)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -180,9 +176,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) 
 class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
     """Data update coordinator for Andersen EV."""
 
-    def __init__(
-        self, hass: HomeAssistant, entry: AndersenEvConfigEntry, client: KonnectClient
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, entry: AndersenEvConfigEntry, client: KonnectClient) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -209,9 +203,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         try:
             devices = await self.client.getDevices()
         except AndersenAuthError as err:
-            raise ConfigEntryAuthFailed(
-                "Authentication failed - please re-enter credentials"
-            ) from err
+            raise ConfigEntryAuthFailed("Authentication failed - please re-enter credentials") from err
         except AndersenApiError as err:
             ir.async_create_issue(
                 self.hass,
@@ -224,16 +216,12 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
             if self.devices:
                 _LOGGER.warning("API error, using cached device data: %s", err)
                 return self.devices
-            raise UpdateFailed(
-                f"Error communicating with Andersen EV API: {err}"
-            ) from err
+            raise UpdateFailed(f"Error communicating with Andersen EV API: {err}") from err
         except AndersenError as err:
             if self.devices:
                 _LOGGER.warning("API error, using cached device data: %s", err)
                 return self.devices
-            raise UpdateFailed(
-                f"Error communicating with Andersen EV API: {err}"
-            ) from err
+            raise UpdateFailed(f"Error communicating with Andersen EV API: {err}") from err
 
         ir.async_delete_issue(self.hass, DOMAIN, "api_shape_changed")
 
@@ -283,17 +271,13 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
             try:
                 await device.get_last_charge()
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Failed to fetch last charge for %s: %s", device.friendly_name, err
-                )
+                _LOGGER.warning("Failed to fetch last charge for %s: %s", device.friendly_name, err)
 
             # Fetch solar status for each device
             try:
                 await device.get_solar()
             except UpdateFailed as err:
-                _LOGGER.debug(
-                    "Error getting solar status for %s: %s", device.friendly_name, err
-                )
+                _LOGGER.debug("Error getting solar status for %s: %s", device.friendly_name, err)
 
         return self.devices
 
@@ -303,9 +287,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         if self._device_availability.get(device.device_id, True):
             _LOGGER.warning("Device %s is unavailable: %s", device.friendly_name, error)
         else:
-            _LOGGER.debug(
-                "Device %s still unavailable: %s", device.friendly_name, error
-            )
+            _LOGGER.debug("Device %s still unavailable: %s", device.friendly_name, error)
         self._device_availability[device.device_id] = False
 
 

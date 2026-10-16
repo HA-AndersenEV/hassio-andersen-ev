@@ -109,9 +109,7 @@ class KonnectClient:
                 aws_srp.confirm_device(tokens)
                 _LOGGER.debug(
                     "Device confirmed with Cognito (device tracking active), key ...%s",
-                    device_key[-4:]
-                    if device_key and len(device_key) >= 4
-                    else device_key,
+                    device_key[-4:] if device_key and len(device_key) >= 4 else device_key,
                 )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
@@ -127,9 +125,7 @@ class KonnectClient:
         Falls back to a full SRP login only if the refresh token is dead.
         """
         if not self.refresh_token_value or not self.device_key:
-            _LOGGER.debug(
-                "No refresh token / device key; performing full authentication"
-            )
+            _LOGGER.debug("No refresh token / device key; performing full authentication")
             await self.authenticate_user()
             return
         _LOGGER.debug(
@@ -137,15 +133,11 @@ class KonnectClient:
             self.device_key[-4:] if len(self.device_key) >= 4 else self.device_key,
         )
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, self.__refresh_with_device_key
-            )
+            result = await asyncio.get_event_loop().run_in_executor(None, self.__refresh_with_device_key)
         except ClientError as err:
             code = err.response.get("Error", {}).get("Code")
             if code == "NotAuthorizedException":
-                _LOGGER.info(
-                    "Refresh token expired/revoked; performing full re-authentication"
-                )
+                _LOGGER.info("Refresh token expired/revoked; performing full re-authentication")
                 await self.authenticate_user()
                 return
             raise
@@ -222,9 +214,7 @@ class KonnectClient:
         response_body = response.json()
 
         if "devices" not in response_body:
-            raise AndersenApiError(
-                "Unexpected API response shape: missing 'devices' key"
-            )
+            raise AndersenApiError("Unexpected API response shape: missing 'devices' key")
 
         if not response_body["devices"]:
             _LOGGER.warning("No devices found in API response")
@@ -276,8 +266,6 @@ class KonnectClient:
         else:
             _LOGGER.debug(
                 "Token still valid, expiry in %s seconds (effective expiry %s)",
-                int(self.token_expiry_time - time.time())
-                if self.token_expiry_time
-                else "unknown",
+                int(self.token_expiry_time - time.time()) if self.token_expiry_time else "unknown",
                 self._expiry_str(),
             )

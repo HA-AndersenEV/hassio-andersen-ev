@@ -68,9 +68,7 @@ class KonnectDevice:
     def graphql_client(self) -> GraphQLClient:
         """Lazily create the GraphQL client on first use."""
         if self._graphql_client is None:
-            assert self.api.token is not None, (
-                "graphql_client accessed before authentication"
-            )
+            assert self.api.token is not None, "graphql_client accessed before authentication"
             self._graphql_client = GraphQLClient(
                 token=self.api.token,
                 token_refresh=self._refresh_graphql_token,
@@ -168,9 +166,7 @@ class KonnectDevice:
             " { id name return_value } }"
         )
 
-        _LOGGER.debug(
-            "Sending API command to disable all schedules for device %s", self.device_id
-        )
+        _LOGGER.debug("Sending API command to disable all schedules for device %s", self.device_id)
 
         result = await self.graphql_client.execute_mutation(
             operation_name="setAllSchedulesDisabled",
@@ -227,9 +223,7 @@ class KonnectDevice:
         # Store the model name if available
         if "name" in result["getDevice"]:
             self.model_name = result["getDevice"]["name"]
-            _LOGGER.debug(
-                "Model name for device %s: %s", self.friendly_name, self.model_name
-            )
+            _LOGGER.debug("Model name for device %s: %s", self.friendly_name, self.model_name)
 
         status = result["getDevice"]["deviceStatus"]
         self._log_status_changes(status)
@@ -292,14 +286,8 @@ class KonnectDevice:
                 )
                 log_changes = True
 
-        if (
-            "solarMaxGridChargePercent" in status
-            and "solarMaxGridChargePercent" in self._last_status
-        ):
-            if (
-                status["solarMaxGridChargePercent"]
-                != self._last_status["solarMaxGridChargePercent"]
-            ):
+        if "solarMaxGridChargePercent" in status and "solarMaxGridChargePercent" in self._last_status:
+            if status["solarMaxGridChargePercent"] != self._last_status["solarMaxGridChargePercent"]:
                 _LOGGER.info(
                     "Device %s: Solar max grid charge percent changed from %s to %s",
                     self.friendly_name,
@@ -327,10 +315,7 @@ class KonnectDevice:
         if result is None:
             return None
 
-        if (
-            "getDevice" not in result
-            or "deviceCalculatedChargeLogs" not in result["getDevice"]
-        ):
+        if "getDevice" not in result or "deviceCalculatedChargeLogs" not in result["getDevice"]:
             _LOGGER.warning("Invalid response format from last charge request")
             return None
 

@@ -296,7 +296,7 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
         return True
 
 
-class AndersenEvSolarSwitch(CoordinatorEntity, SwitchEntity):  # pylint: disable=abstract-method
+class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEntity):  # pylint: disable=abstract-method
     """Base class for Andersen EV solar control switches."""
 
     def __init__(

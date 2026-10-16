@@ -145,8 +145,8 @@ class TestAndersenEvSolarChargeAlwaysSwitch:
 
         switch = AndersenEvSolarChargeAlwaysSwitch(mock_coordinator, mock_device)
         switch.hass = mock_coordinator.hass
-        switch.async_write_ha_state = MagicMock()
-        await switch.async_turn_on()
+        with patch.object(switch, "async_write_ha_state"):
+            await switch.async_turn_on()
 
         mock_device.set_solar.assert_called_once_with(charge_always=True, max_grid_charge_percent=expected_percent)
         assert mock_device._last_solar_status["solarChargeAlways"] is True
@@ -160,8 +160,8 @@ class TestAndersenEvSolarChargeAlwaysSwitch:
 
         switch = AndersenEvSolarChargeAlwaysSwitch(mock_coordinator, mock_device)
         switch.hass = mock_coordinator.hass
-        switch.async_write_ha_state = MagicMock()
-        await switch.async_turn_off()
+        with patch.object(switch, "async_write_ha_state"):
+            await switch.async_turn_off()
 
         mock_device.set_solar.assert_called_once_with(charge_always=False, max_grid_charge_percent=0)
         assert mock_device._last_solar_status["solarChargeAlways"] is False

@@ -146,7 +146,9 @@ async def run(
     _LOGGER.info("Authenticating as %s ...", email)
     client = KonnectClient(email, password)
     await client.authenticate_user()
-    token = client.token
+    if (token := client.token) is None:
+        _LOGGER.error("Authentication returned no token")
+        return False
     _LOGGER.info("Authenticated — token expires in ~%ss", client.token_expires_in)
 
     environments = [("prod", PROD_BASE_URL), ("staging", STAGING_BASE_URL)]
@@ -177,9 +179,7 @@ async def run(
 
         if out_file and ok:
             # Re-fetch the first device raw so the file holds exactly what the API returned.
-            response = await asyncio.to_thread(
-                _get, f"{base_url}/getDevice", token, {"deviceId": device_ids[0]}
-            )
+            response = await asyncio.to_thread(_get, f"{base_url}/getDevice", token, {"deviceId": device_ids[0]})
             path = out_file if env_name == "prod" else f"{out_file}.{env_name}"
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(_body(response), fh, indent=2, default=str)
@@ -202,30 +202,22 @@ def main() -> None:
         default=os.environ.get("ANDERSEN_PASSWORD"),
         help="Account password (or ANDERSEN_PASSWORD env var)",
     )
-    parser.add_argument(
-        "--device-id", default=None, help="Skip discovery and query this device ID"
-    )
+    parser.add_argument("--device-id", default=None, help="Skip discovery and query this device ID")
     parser.add_argument(
         "--also-staging",
         action="store_true",
         help="Query staging even if prod succeeds",
     )
-    parser.add_argument(
-        "--out", default=None, help="Write the raw getDevice JSON to this file"
-    )
+    parser.add_argument("--out", default=None, help="Write the raw getDevice JSON to this file")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
     if not args.email or not args.password:
-        parser.error(
-            "Email and password are required (via flags or ANDERSEN_EMAIL / ANDERSEN_PASSWORD env vars)"
-        )
+        parser.error("Email and password are required (via flags or ANDERSEN_EMAIL / ANDERSEN_PASSWORD env vars)")
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    passed = asyncio.run(
-        run(args.email, args.password, args.device_id, args.also_staging, args.out)
-    )
+    passed = asyncio.run(run(args.email, args.password, args.device_id, args.also_staging, args.out))
     sys.exit(0 if passed else 1)
 
 

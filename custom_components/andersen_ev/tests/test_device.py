@@ -2,7 +2,7 @@
 # pylint: disable=protected-access
 
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -283,10 +283,9 @@ class TestDeviceGraphQLCalls:
         self, mock_device: KonnectDevice, sent_percents: list[int], success: bool, expected: int | None
     ) -> None:
         """The last non-zero percent is kept so it can be restored."""
-        mock_device.graphql_client.set_solar = AsyncMock(return_value=success)
-
-        for percent in sent_percents:
-            await mock_device.set_solar(max_grid_charge_percent=percent)
+        with patch.object(mock_device.graphql_client, "set_solar", AsyncMock(return_value=success)):
+            for percent in sent_percents:
+                await mock_device.set_solar(max_grid_charge_percent=percent)
 
         assert mock_device.last_grid_charge_percent == expected
 
@@ -303,14 +302,12 @@ class TestDeviceGraphQLCalls:
         self, mock_device: KonnectDevice, status_percents: list[int], expected: int | None
     ) -> None:
         """Percents read from the charger are remembered too, so a restart doesn't lose them while on."""
-        mock_device.graphql_client.execute_query = AsyncMock(
-            side_effect=[
-                {"getDevice": {"deviceStatus": {"solarMaxGridChargePercent": percent}}} for percent in status_percents
-            ]
-        )
-
-        for _ in status_percents:
-            await mock_device.get_solar()
+        responses = [
+            {"getDevice": {"deviceStatus": {"solarMaxGridChargePercent": percent}}} for percent in status_percents
+        ]
+        with patch.object(mock_device.graphql_client, "execute_query", AsyncMock(side_effect=responses)):
+            for _ in status_percents:
+                await mock_device.get_solar()
 
         assert mock_device.last_grid_charge_percent == expected
 
