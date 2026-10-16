@@ -269,7 +269,7 @@ class TestInit:
         assert switch._attr_unique_id == "device_1_schedule_2"
         assert switch._attr_translation_key == "schedule"
         assert switch._attr_translation_placeholders == {"index": "3"}
-        assert switch._attr_device_info["name"] == "My Charger (device_1)"
+        assert switch._attr_device_info["name"] == "My Charger"
         assert switch._attr_has_entity_name is True
 
     def test_entity_category_is_config(self):

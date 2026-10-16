@@ -71,6 +71,15 @@ class TestAsyncSetupEntry:
         ]
 
 
+def test_device_name_excludes_device_id():
+    """Home Assistant adds the device name to the entity name, so it is kept short."""
+    device = _make_device(friendly_name="My Charger")
+
+    button = AndersenEvButton(_make_coordinator([device]), device, CHARGE_NOW)
+
+    assert button.device_info["name"] == "My Charger"
+
+
 class TestAvailability:
     """Tests for AndersenEvButton.available."""
 

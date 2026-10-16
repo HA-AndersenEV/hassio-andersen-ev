@@ -136,7 +136,7 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
         self._attr_unique_id = f"{device.device_id}_schedule_{index}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.device_id)},
-            name=f"{device.friendly_name} ({device.device_id})",
+            name=device.friendly_name,
             manufacturer="Andersen EV",
             serial_number=f"{device.device_id}",
         )
@@ -299,11 +299,14 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
 class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEntity):  # pylint: disable=abstract-method
     """Base class for Andersen EV solar control switches."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: AndersenEvCoordinator,
         device,
         solar_field: str,
+        translation_key: str,
         name_suffix: str,
     ) -> None:
         """Initialize the switch."""
@@ -311,11 +314,11 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
         self._device = device
         self._solar_field = solar_field
         self._setting_name = name_suffix
-        self._attr_name = f"{device.friendly_name} {name_suffix}"
+        self._attr_translation_key = translation_key
         self._attr_unique_id = f"{device.device_id}_solar_{solar_field}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, device.device_id)},
-            "name": f"{device.friendly_name} ({device.device_id})",
+            "name": device.friendly_name,
             "manufacturer": "Andersen EV",
             "model": "A2",
         }
@@ -406,7 +409,7 @@ class AndersenEvBoostSwitch(AndersenEvSolarSwitch):
 
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, device, "boost", "Boost")
+        super().__init__(coordinator, device, "boost", "boost", "Boost")
 
 
 class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch, RestoreEntity):
@@ -414,7 +417,7 @@ class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch, RestoreEntity):
 
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, device, "solarChargeAlways", "Supplement with grid power")
+        super().__init__(coordinator, device, "solarChargeAlways", "solar_charge_always", "Supplement with grid power")
 
     async def async_added_to_hass(self) -> None:
         """Restore the percent to use when grid supplement is next turned on."""
@@ -452,4 +455,10 @@ class AndersenEvSolarChargeOutsideScheduleSwitch(AndersenEvSolarSwitch):
 
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, device, "solarChargeOutsideSchedules", "Charge outside schedule")
+        super().__init__(
+            coordinator,
+            device,
+            "solarChargeOutsideSchedules",
+            "solar_charge_outside_schedules",
+            "Charge outside schedule",
+        )
