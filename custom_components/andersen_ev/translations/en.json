@@ -46,6 +46,7 @@
       "sys_voltage": { "name": "System Voltage" },
       "sys_fault_code": { "name": "Fault Code" },
       "sys_grid_energy_delta": { "name": "System Grid Energy Delta" },
+      "max_system_charge_current": { "name": "Max system charge current" },
       "cost": { "name": "Total Cost" },
       "grid_cost": { "name": "Grid Cost" },
       "solar_cost": { "name": "Solar Cost" },
@@ -62,14 +63,15 @@
     },
     "switch": {
       "schedule": { "name": "Schedule {index}" },
-      "solar_override": { "name": "Solar override" },
-      "solar_charge_always": { "name": "Supplement with grid power" }
+      "boost": { "name": "Boost" },
+      "solar_charge_always": { "name": "Supplement with grid power" },
+      "solar_charge_outside_schedules": { "name": "Charge outside schedule" }
     },
     "lock": {
       "lock": { "name": "Lock" }
     },
     "number": {
-      "solar_max_grid_charge_percent": { "name": "Solar max grid charge percent" }
+      "grid_source_power": { "name": "Grid source power" }
     }
   },
   "exceptions": {

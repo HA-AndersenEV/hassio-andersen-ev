@@ -11,16 +11,25 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoredExtraData, RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
 from .entity import AndersenEvDeviceInfoMixin
+from .grid_source import device_max_amps, grid_supplement_on_percent
 from .konnect import const
 
 PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
+
+SOLAR_FIELD_TO_PARAM = {
+    "boost": "boost",
+    "solarChargeAlways": "charge_always",
+    "solarChargeOutsideSchedules": "charge_outside_schedules",
+    "solarMaxGridChargePercent": "max_grid_charge_percent",
+}
 
 
 async def _async_build_switches_for_device(
@@ -48,8 +57,9 @@ async def _async_build_switches_for_device(
 
     # Create switches for each schedule
     entities: list[SwitchEntity] = [
-        AndersenEvSolarOverrideSwitch(coordinator, device),
+        AndersenEvBoostSwitch(coordinator, device),
         AndersenEvSolarChargeAlwaysSwitch(coordinator, device),
+        AndersenEvSolarChargeOutsideScheduleSwitch(coordinator, device),
     ]
     for idx, _slot in enumerate(schedule_slots):
         # Get the schedule name from deviceInfo if available
@@ -408,28 +418,23 @@ class AndersenEvSolarSwitch(CoordinatorEntity, SwitchEntity):  # pylint: disable
         """Disable the solar setting."""
         await self._set_solar_value(False)
 
+    def _solar_changes(self, value: bool) -> dict[str, Any] | None:
+        """Return the solar status fields to set, or None if they can't be worked out."""
+        return {self._solar_field: value}
+
     async def _set_solar_value(self, value: bool) -> None:
         """Set the solar value."""
         try:
-            # Map field names to set_solar parameter names
-            field_to_param = {
-                "solarOverride": "override",
-                "solarChargeAlways": "charge_always",
-                "solarChargeOutsideSchedules": "charge_outside_schedules",
-            }
-            param_name = field_to_param.get(self._solar_field)
-            if not param_name:
-                _LOGGER.error("Unknown solar field: %s", self._solar_field)
+            if (changes := self._solar_changes(value)) is None:
                 return
-
-            # Call set_solar with only the relevant parameter
-            kwargs_dict = {param_name: value}
-            success = await self._device.set_solar(**kwargs_dict)
+            success = await self._device.set_solar(
+                **{SOLAR_FIELD_TO_PARAM[field]: field_value for field, field_value in changes.items()}
+            )
 
             if success:
                 if self._device._last_solar_status is None:
                     self._device._last_solar_status = {}
-                self._device._last_solar_status[self._solar_field] = value
+                self._device._last_solar_status.update(changes)
                 self.async_write_ha_state()
                 await self.coordinator.async_request_refresh()
             else:
@@ -442,17 +447,59 @@ class AndersenEvSolarSwitch(CoordinatorEntity, SwitchEntity):  # pylint: disable
             _LOGGER.error("Error setting solar value: %s", err)
 
 
-class AndersenEvSolarOverrideSwitch(AndersenEvSolarSwitch):
-    """Switch for solar override control."""
+class AndersenEvBoostSwitch(AndersenEvSolarSwitch):
+    """Switch for boost (charge at max rate, ignoring solar settings)."""
+
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, device, "solarOverride", "Solar override")
+        super().__init__(coordinator, device, "boost", "Boost")
 
 
-class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch):
+class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch, RestoreEntity):
     """Switch for solar charge always control."""
 
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, device, "solarChargeAlways", "Supplement with grid power")
+        super().__init__(
+            coordinator, device, "solarChargeAlways", "Supplement with grid power"
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the percent to use when grid supplement is next turned on."""
+        await super().async_added_to_hass()
+        # A percent read from the charger on startup is newer than the stored one.
+        if self._device.last_grid_charge_percent is not None:
+            return
+        if (last_extra_data := await self.async_get_last_extra_data()) is None:
+            return
+        self._device.last_grid_charge_percent = last_extra_data.as_dict().get("last_grid_charge_percent")
+
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData:
+        """Keep the percent to restore across restarts, as the charger reports 0 while off."""
+        return RestoredExtraData({"last_grid_charge_percent": self._device.last_grid_charge_percent})
+
+    def _solar_changes(self, value: bool) -> dict[str, Any] | None:
+        """Pair chargeAlways with a percent, as the API ignores it otherwise."""
+        if not value:
+            return {"solarChargeAlways": False, "solarMaxGridChargePercent": 0}
+        if (max_amps := device_max_amps(self._device)) is None:
+            _LOGGER.warning(
+                "Cannot turn on grid supplement for %s: max charge current is unknown",
+                self._device.friendly_name,
+            )
+            return None
+        return {
+            "solarChargeAlways": True,
+            "solarMaxGridChargePercent": grid_supplement_on_percent(self._device, max_amps),
+        }
+
+
+class AndersenEvSolarChargeOutsideScheduleSwitch(AndersenEvSolarSwitch):
+    """Switch for charging outside of schedules."""
+
+    def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator, device, "solarChargeOutsideSchedules", "Charge outside schedule")

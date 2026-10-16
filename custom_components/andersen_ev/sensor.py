@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
@@ -156,6 +157,18 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
             enabled_default=False,
         )
     )
+    entities.append(
+        AndersenEvLiveSensor(
+            coordinator,
+            device,
+            "max_system_charge_current",
+            "cfgChargeAmpMax",
+            SensorDeviceClass.CURRENT,
+            None,
+            UnitOfElectricCurrent.AMPERE,
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+    )
 
     # Cost sensors from historical data
     entities.append(
@@ -297,7 +310,7 @@ def _session_start_as_local(start: Any) -> datetime | None:
         return None
     try:
         parsed = dt_util.parse_datetime(start)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if parsed is None:
         return None

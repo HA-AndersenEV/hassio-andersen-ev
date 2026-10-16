@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from andersen_ev.konnect.device import KonnectDevice
+
 
 class TestDeviceGraphQLCalls:
     """Test GraphQL calls from KonnectDevice."""
@@ -186,6 +188,7 @@ class TestDeviceGraphQLCalls:
                         "solarOverride": False,
                         "solarChargeAlways": True,
                         "solarMaxGridChargePercent": 50,
+                        "sysScheduleLock": True,
                         "online": True,
                     }
                 }
@@ -195,9 +198,10 @@ class TestDeviceGraphQLCalls:
         solar = await mock_device.get_solar()
 
         assert solar is not None
-        assert solar["solarOverride"] is False
+        assert solar["boost"] is False
         assert solar["solarChargeAlways"] is True
         assert solar["solarMaxGridChargePercent"] == 50
+        assert solar["solarChargeOutsideSchedules"] is False
         mock_device.graphql_client.execute_query.assert_called_once()
 
     @pytest.mark.asyncio
@@ -217,9 +221,20 @@ class TestDeviceGraphQLCalls:
 
         solar = await mock_device.get_solar()
         assert solar is not None
-        assert solar["solarOverride"] is None
+        assert solar["boost"] is None
         assert solar["solarChargeAlways"] is None
         assert solar["solarMaxGridChargePercent"] is None
+        assert solar["solarChargeOutsideSchedules"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_solar_charge_outside_schedules_is_inverse_of_schedule_lock(self, mock_device):
+        mock_device.graphql_client.execute_query = AsyncMock(
+            return_value={"getDevice": {"deviceStatus": {"sysScheduleLock": False}}}
+        )
+
+        solar = await mock_device.get_solar()
+
+        assert solar["solarChargeOutsideSchedules"] is True
 
     @pytest.mark.asyncio
     async def test_set_solar_all_params(self, mock_device, graphql_set_solar_response):
@@ -227,7 +242,7 @@ class TestDeviceGraphQLCalls:
         mock_device.graphql_client.set_solar = AsyncMock(return_value=True)
 
         result = await mock_device.set_solar(
-            override=True,
+            boost=True,
             charge_always=False,
             max_grid_charge_percent=75,
         )
@@ -247,7 +262,7 @@ class TestDeviceGraphQLCalls:
         """Test set_solar with only one optional parameter."""
         mock_device.graphql_client.set_solar = AsyncMock(return_value=True)
 
-        result = await mock_device.set_solar(override=True)
+        result = await mock_device.set_solar(boost=True)
 
         assert result is True
         mock_device.graphql_client.set_solar.assert_called_once_with(
@@ -255,12 +270,56 @@ class TestDeviceGraphQLCalls:
             {"override": True},
         )
 
+    @pytest.mark.parametrize(
+        ("sent_percents", "success", "expected"),
+        [
+            pytest.param([50], True, 50, id="remembers_sent_percent"),
+            pytest.param([50, 0], True, 50, id="zero_keeps_previous"),
+            pytest.param([50], False, None, id="failed_write_not_remembered"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_set_solar_remembers_grid_charge_percent(
+        self, mock_device: KonnectDevice, sent_percents: list[int], success: bool, expected: int | None
+    ) -> None:
+        """The last non-zero percent is kept so it can be restored."""
+        mock_device.graphql_client.set_solar = AsyncMock(return_value=success)
+
+        for percent in sent_percents:
+            await mock_device.set_solar(max_grid_charge_percent=percent)
+
+        assert mock_device.last_grid_charge_percent == expected
+
+    @pytest.mark.parametrize(
+        ("status_percents", "expected"),
+        [
+            pytest.param([40], 40, id="remembers_read_percent"),
+            pytest.param([40, 0], 40, id="zero_keeps_previous"),
+            pytest.param([0], None, id="zero_not_remembered"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_get_solar_remembers_grid_charge_percent(
+        self, mock_device: KonnectDevice, status_percents: list[int], expected: int | None
+    ) -> None:
+        """Percents read from the charger are remembered too, so a restart doesn't lose them while on."""
+        mock_device.graphql_client.execute_query = AsyncMock(
+            side_effect=[
+                {"getDevice": {"deviceStatus": {"solarMaxGridChargePercent": percent}}} for percent in status_percents
+            ]
+        )
+
+        for _ in status_percents:
+            await mock_device.get_solar()
+
+        assert mock_device.last_grid_charge_percent == expected
+
     @pytest.mark.asyncio
     async def test_set_solar_failure(self, mock_device):
         """Test set_solar when API returns None."""
         mock_device.graphql_client.set_solar = AsyncMock(return_value=False)
 
-        result = await mock_device.set_solar(override=True)
+        result = await mock_device.set_solar(boost=True)
         assert result is False
 
     # -- misc / lifecycle tests ---------------------------------------------

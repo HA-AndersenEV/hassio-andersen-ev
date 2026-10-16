@@ -283,6 +283,7 @@ type Mutation {
     override: Boolean
     chargeAlways: Boolean
     maxGridChargePercent: Int
+    chargeOutsideSchedules: Boolean
   ): SolarSettings
 
   runAEVCommand(

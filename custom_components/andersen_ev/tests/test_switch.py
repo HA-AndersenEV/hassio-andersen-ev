@@ -59,9 +59,9 @@ class TestAsyncSetupEntry:
         await async_setup_entry(MagicMock(), entry, async_add_entities)
 
         entities = async_add_entities.call_args.args[0]
-        assert len(entities) == 2
-        assert entities[0]._schedule_name == "Overnight"
-        assert entities[1]._schedule_name == "Schedule 2"
+        schedule_switches = [e for e in entities if isinstance(e, AndersenEvScheduleSwitch)]
+        assert len(entities) == 5
+        assert [e._schedule_name for e in schedule_switches] == ["Overnight", "Schedule 2"]
 
     @pytest.mark.asyncio
     async def test_missing_device_info_skips_device(self):
@@ -157,7 +157,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 2
+        assert len(new_entities) == 5
         assert all(entity._device.device_id == "device_2" for entity in new_entities)
 
     @pytest.mark.asyncio
@@ -216,8 +216,8 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 1
-        assert new_entities[0]._device.device_id == "device_1"
+        assert len(new_entities) == 4
+        assert all(entity._device.device_id == "device_1" for entity in new_entities)
 
     @pytest.mark.asyncio
     async def test_failed_switch_build_is_retried_on_next_update(self):
@@ -252,8 +252,8 @@ class TestDynamicDevices:
         assert hass.async_create_task.call_count == 2
         await hass.async_create_task.call_args.args[0]
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 1
-        assert new_entities[0]._device.device_id == "device_1"
+        assert len(new_entities) == 4
+        assert all(entity._device.device_id == "device_1" for entity in new_entities)
 
 
 class TestInit:

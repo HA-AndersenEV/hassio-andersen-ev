@@ -22,6 +22,8 @@ class KonnectDevice:
     _last_status: dict[str, Any] | None = None
     _last_charge: dict[str, Any] | None = None
     _last_solar_status: dict[str, Any] | None = None
+    # Restored when grid supplement is turned back on, since turning it off zeroes the percent.
+    last_grid_charge_percent: int | None = None
     model_name: str | None = None
     currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
@@ -35,6 +37,7 @@ class KonnectDevice:
         self._last_status = None
         self._last_charge = None
         self._last_solar_status = None
+        self.last_grid_charge_percent = None
         self.model_name = None
         self.currency = None
         self._graphql_client = None
@@ -266,7 +269,7 @@ class KonnectDevice:
         if "solarOverride" in status and "solarOverride" in self._last_status:
             if status["solarOverride"] != self._last_status["solarOverride"]:
                 _LOGGER.info(
-                    "Device %s: Solar override changed from %s to %s",
+                    "Device %s: Boost changed from %s to %s",
                     self.friendly_name,
                     self._last_status["solarOverride"],
                     status["solarOverride"],
@@ -360,17 +363,25 @@ class KonnectDevice:
             )
             return None
 
+        # The API only exposes this as sysScheduleLock, which is the inverse of "charge outside schedule".
+        schedule_lock = status.get("sysScheduleLock")
         self._last_solar_status = {
-            "solarOverride": status.get("solarOverride"),
+            "boost": status.get("solarOverride"),
             "solarChargeAlways": status.get("solarChargeAlways"),
             "solarMaxGridChargePercent": status.get("solarMaxGridChargePercent"),
+            "solarChargeOutsideSchedules": None if schedule_lock is None else not schedule_lock,
         }
+        self._remember_grid_charge_percent(status.get("solarMaxGridChargePercent"))
         return self._last_solar_status
+
+    def _remember_grid_charge_percent(self, percent: int | None) -> None:
+        if percent:
+            self.last_grid_charge_percent = percent
 
     async def set_solar(
         self,
         *,
-        override: bool | None = None,
+        boost: bool | None = None,
         charge_always: bool | None = None,
         max_grid_charge_percent: int | None = None,
         charge_outside_schedules: bool | None = None,
@@ -380,17 +391,17 @@ class KonnectDevice:
         Only the provided (non-None) parameters are sent to the API.
         """
         _LOGGER.debug(
-            "Setting solar options for device %s (%s): override=%s, charge_always=%s, max_grid_charge_percent=%s",
+            "Setting solar options for device %s (%s): boost=%s, charge_always=%s, max_grid_charge_percent=%s",
             self.device_id,
             self.friendly_name,
-            override,
+            boost,
             charge_always,
             max_grid_charge_percent,
         )
 
         fields: dict[str, object] = {}
-        if override is not None:
-            fields["override"] = override
+        if boost is not None:
+            fields["override"] = boost
         if charge_always is not None:
             fields["chargeAlways"] = charge_always
         if max_grid_charge_percent is not None:
@@ -398,7 +409,10 @@ class KonnectDevice:
         if charge_outside_schedules is not None:
             fields["chargeOutsideSchedules"] = charge_outside_schedules
 
-        return await self.graphql_client.set_solar(self.device_id, fields)
+        success = await self.graphql_client.set_solar(self.device_id, fields)
+        if success:
+            self._remember_grid_charge_percent(max_grid_charge_percent)
+        return success
 
     async def get_device_info(self):
         """Get the detailed device information."""
