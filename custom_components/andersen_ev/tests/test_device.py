@@ -238,17 +238,17 @@ class TestDeviceGraphQLCalls:
 
     def test_update_solar_status_from_device_status(self, mock_device: KonnectDevice) -> None:
         """Solar cache is populated from an already-fetched status without another request."""
-        mock_device.graphql_client.execute_query = AsyncMock()
+        with patch.object(mock_device.graphql_client, "execute_query", AsyncMock()) as execute_query:
+            solar = mock_device.update_solar_status_from_device_status(
+                {
+                    "solarOverride": True,
+                    "solarChargeAlways": False,
+                    "solarMaxGridChargePercent": 30,
+                    "sysScheduleLock": False,
+                }
+            )
 
-        solar = mock_device.update_solar_status_from_device_status(
-            {
-                "solarOverride": True,
-                "solarChargeAlways": False,
-                "solarMaxGridChargePercent": 30,
-                "sysScheduleLock": False,
-            }
-        )
-
+        execute_query.assert_not_called()
         assert solar == {
             "boost": True,
             "solarChargeAlways": False,
@@ -257,7 +257,6 @@ class TestDeviceGraphQLCalls:
         }
         assert mock_device.last_solar_status == solar
         assert mock_device.last_grid_charge_percent == 30
-        mock_device.graphql_client.execute_query.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_set_solar_all_params(self, mock_device, graphql_set_solar_response):
