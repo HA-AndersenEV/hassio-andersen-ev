@@ -25,6 +25,10 @@
       "current_grid_energy": { "default": "mdi:power-plug" },
       "session_start": { "default": "mdi:clock-start" }
     },
+    "button": {
+      "charge_now": { "default": "mdi:ev-station" },
+      "stop_charging": { "default": "mdi:stop-circle-outline" }
+    },
     "switch": {
       "schedule": { "default": "mdi:calendar-clock" }
     }

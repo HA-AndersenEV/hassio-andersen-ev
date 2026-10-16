@@ -26,7 +26,7 @@ from .konnect.client import KonnectClient
 from .konnect.device import KonnectDevice
 from .konnect.exceptions import AndersenApiError, AndersenAuthError, AndersenError
 
-PLATFORMS = [Platform.LOCK, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [Platform.BUTTON, Platform.LOCK, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 type AndersenEvConfigEntry = ConfigEntry[AndersenEvCoordinator]
 

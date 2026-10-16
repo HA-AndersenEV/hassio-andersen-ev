@@ -142,6 +142,56 @@ class TestDeviceGraphQLCalls:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_charge_now(self, mock_device, graphql_command_success_response):
+        """Charge now sends the chargeNow command."""
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value=graphql_command_success_response)
+
+        result = await mock_device.charge_now()
+
+        assert result is True
+        mock_device.graphql_client.execute_mutation.assert_awaited_once()
+        assert mock_device.graphql_client.execute_mutation.call_args.kwargs["variables"] == {
+            "deviceId": "test_device_123",
+            "functionName": "chargeNow",
+        }
+
+    @pytest.mark.asyncio
+    async def test_charge_now_failure(self, mock_device):
+        """Charge now returns False when the command fails."""
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value=None)
+
+        assert await mock_device.charge_now() is False
+
+    @pytest.mark.asyncio
+    async def test_stop_charging(self, mock_device, graphql_command_success_response):
+        """Stop charging sends userForceStop then stopChargeNow, as the app does."""
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value=graphql_command_success_response)
+
+        result = await mock_device.stop_charging()
+
+        assert result is True
+        calls = mock_device.graphql_client.execute_mutation.call_args_list
+        sent = [call.kwargs["variables"]["functionName"] for call in calls]
+        assert sent == ["userForceStop", "stopChargeNow"]
+
+    @pytest.mark.asyncio
+    async def test_stop_charging_force_stop_failure(self, mock_device):
+        """Stop charging does not send stopChargeNow if userForceStop fails."""
+        mock_device.graphql_client.execute_mutation = AsyncMock(return_value=None)
+
+        result = await mock_device.stop_charging()
+
+        assert result is False
+        mock_device.graphql_client.execute_mutation.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_charging_second_command_failure(self, mock_device, graphql_command_success_response):
+        """Stop charging fails if stopChargeNow fails after userForceStop succeeds."""
+        mock_device.graphql_client.execute_mutation = AsyncMock(side_effect=[graphql_command_success_response, None])
+
+        assert await mock_device.stop_charging() is False
+
+    @pytest.mark.asyncio
     async def test_disable_all_schedules_success(self, mock_device, graphql_command_success_response):
         """Test successful disable_all_schedules."""
         mock_device.graphql_client.execute_mutation = AsyncMock(return_value=graphql_command_success_response)

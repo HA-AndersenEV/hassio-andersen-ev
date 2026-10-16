@@ -67,6 +67,10 @@
       "solar_charge_always": { "name": "Supplement with grid power" },
       "solar_charge_outside_schedules": { "name": "Charge outside schedule" }
     },
+    "button": {
+      "charge_now": { "name": "Charge now" },
+      "stop_charging": { "name": "Stop charging" }
+    },
     "lock": {
       "lock": { "name": "Lock" }
     },
@@ -78,6 +82,8 @@
     "device_not_found": { "message": "Device {device_id} not found" },
     "get_device_info_failed": { "message": "Failed to retrieve device information for {device_id}" },
     "get_device_status_failed": { "message": "Failed to retrieve device status for {device_id}" },
+    "charge_now_failed": { "message": "Failed to start charging on {device_name}" },
+    "stop_charging_failed": { "message": "Failed to stop charging on {device_name}" },
     "lock_failed": { "message": "Failed to lock the charger {device_name}" },
     "unlock_failed": { "message": "Failed to unlock the charger {device_name}" },
     "schedule_data_unavailable": { "message": "Failed to retrieve schedule data for {device_name}" },

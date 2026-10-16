@@ -495,6 +495,7 @@ class TestAsyncSetupEntry:
         call_args = hass.config_entries.async_forward_entry_setups.call_args.args
         assert call_args[0] is entry
         assert list(call_args[1]) == [
+            Platform.BUTTON,
             Platform.LOCK,
             Platform.NUMBER,
             Platform.SENSOR,

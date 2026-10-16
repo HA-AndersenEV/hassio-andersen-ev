@@ -13,6 +13,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 ## Features
 * Switch entities for each charging schedule allows enabling/disabling charge schedules.
 * Lock entity to enable or disable the charge point.
+* **Charge now** and **Stop charging** buttons, matching the Konnect+ app (see
+  [Charge now and Stop charging](#charge-now-and-stop-charging)).
 * Solar charging controls matching the Konnect+ app's Power source screen (see
   [Solar charging controls](#solar-charging-controls)):
   * **Supplement with grid power** switch.
@@ -110,6 +112,8 @@ own device automatically - no per-charger configuration is needed.
 See [Features](#features) above for the full entity list and [Services](#services) for the
 service calls. In short:
 * A **lock** entity per charger to enable/disable charging (`userLock`/`userUnlock`).
+* **Charge now** and **Stop charging** buttons per charger (`chargeNow`, and
+  `userForceStop` + `stopChargeNow`).
 * A **switch** entity per charging schedule slot, so each schedule can be turned on or off
   independently.
 * **Solar charging** switches and a grid source power number, mirroring the app's Power source
@@ -160,6 +164,27 @@ triggers:
 ```
 
 Also note that a condition such as "only if unlocked" is false while a command is pending.
+
+### Charge now and Stop charging
+
+These buttons send the same commands as the **Charge now** and **Stop charging** buttons on the
+Konnect+ app's home screen:
+
+* **Charge now** starts charging straight away, ignoring your schedules.
+* **Stop charging** stops the current charge.
+
+Like the lock, the charger can take a minute or two to act on a command and report back, so the
+charge state sensors may not change until a later poll.
+
+The app only shows these buttons in some states, for example Charge now only when a car is
+plugged in and the charger is not already charging, and neither when the charger is locked. The
+integration always makes both buttons available, so pressing one when it doesn't apply may have no
+effect. Andersen also hides them on firmware older than version 500, so they may not work on older
+chargers.
+
+**Stop charging and Charge outside schedule.** If **Charge outside schedule** is on and there is
+enough solar to charge, pressing Stop charging has no effect and the charger keeps charging. Turn
+Charge outside schedule off first, then press Stop charging.
 
 ### Solar charging controls
 
