@@ -50,6 +50,9 @@ async def async_setup_entry(
 class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], NumberEntity):  # pylint: disable=abstract-method
     """Grid source power in kW, stored by the API as maxGridChargePercent."""
 
+    _attr_has_entity_name = True
+    _attr_translation_key = "grid_source_power"
+
     def __init__(
         self,
         coordinator: AndersenEvCoordinator,
@@ -58,11 +61,10 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._device = device
-        self._attr_name = f"{device.friendly_name} Grid source power"
         self._attr_unique_id = f"{device.device_id}_grid_source_power"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, device.device_id)},
-            "name": f"{device.friendly_name} ({device.device_id})",
+            "name": device.friendly_name,
             "manufacturer": "Andersen EV",
             "model": "A2",
         }

@@ -340,7 +340,7 @@ class AndersenEvBaseSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         self._attr_unique_id = f"{device.device_id}_{sensor_type}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.device_id)},
-            name=f"{device.friendly_name} ({device.device_id})",
+            name=device.friendly_name,
             manufacturer="Andersen EV",
             serial_number=f"{device.device_id}",
         )
@@ -433,7 +433,7 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
         self._attr_unique_id = f"{device.device_id}_connector"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.device_id)},
-            name=f"{device.friendly_name} ({device.device_id})",
+            name=device.friendly_name,
             manufacturer="Andersen EV",
             serial_number=f"{device.device_id}",
         )
@@ -543,7 +543,7 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
         self._attr_unique_id = f"{device.device_id}_{sensor_type}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.device_id)},
-            name=f"{device.friendly_name} ({device.device_id})",
+            name=device.friendly_name,
             manufacturer="Andersen EV",
             serial_number=f"{device.device_id}",
         )
@@ -654,7 +654,7 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         self._attr_unique_id = f"{device.device_id}_{sensor_type}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.device_id)},
-            name=f"{device.friendly_name} ({device.device_id})",
+            name=device.friendly_name,
             manufacturer="Andersen EV",
             serial_number=f"{device.device_id}",
         )

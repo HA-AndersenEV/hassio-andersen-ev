@@ -164,7 +164,7 @@ class TestBaseSensorInit:
 
         assert sensor._attr_unique_id == "device_1_energy"
         assert sensor._attr_translation_key == "energy"
-        assert sensor._attr_device_info["name"] == "My Charger (device_1)"
+        assert sensor._attr_device_info["name"] == "My Charger"
         assert sensor._attr_has_entity_name is True
 
 

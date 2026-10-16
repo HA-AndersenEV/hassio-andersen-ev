@@ -385,6 +385,30 @@ async def _write_solar_entity(entity) -> None:
         await entity.async_turn_on()
 
 
+@pytest.mark.parametrize(
+    ("entity_class", "translation_key"),
+    [
+        pytest.param(AndersenEvBoostSwitch, "boost", id="boost_switch"),
+        pytest.param(AndersenEvSolarChargeAlwaysSwitch, "solar_charge_always", id="charge_always_switch"),
+        pytest.param(
+            AndersenEvSolarChargeOutsideScheduleSwitch,
+            "solar_charge_outside_schedules",
+            id="charge_outside_schedule_switch",
+        ),
+        pytest.param(AndersenEvGridSourcePowerNumber, "grid_source_power", id="grid_source_power_number"),
+    ],
+)
+def test_solar_entity_name_comes_from_translation(
+    mock_coordinator: MagicMock, mock_device: MagicMock, entity_class: type, translation_key: str
+) -> None:
+    """Home Assistant adds the device name, so the entity name must not include it."""
+    entity = entity_class(mock_coordinator, mock_device)
+
+    assert entity.has_entity_name is True
+    assert entity.translation_key == translation_key
+    assert entity.device_info["name"] == "Test Charger"
+
+
 @pytest.mark.parametrize("entity_class", SOLAR_ENTITY_CLASSES)
 @pytest.mark.parametrize("status_available", [True, False])
 def test_solar_entity_available_follows_device_status(

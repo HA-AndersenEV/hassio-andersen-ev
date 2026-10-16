@@ -149,7 +149,7 @@ class TestInit:
         assert lock._attr_unique_id == "device_1_lock"
         assert lock._attr_translation_key == "lock"
         assert lock._attr_has_entity_name is True
-        assert lock._attr_device_info["name"] == "My Charger (device_1)"
+        assert lock._attr_device_info["name"] == "My Charger"
         assert lock._attr_device_info["manufacturer"] == "Andersen EV"
         assert lock._attr_device_info["serial_number"] == "device_1"
 

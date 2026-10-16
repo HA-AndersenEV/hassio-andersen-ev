@@ -68,7 +68,7 @@ class AndersenEvLock(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoor
         self._attr_unique_id = f"{device.device_id}_lock"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.device_id)},
-            name=f"{device.friendly_name} ({device.device_id})",
+            name=device.friendly_name,
             manufacturer="Andersen EV",
             serial_number=f"{device.device_id}",
         )
