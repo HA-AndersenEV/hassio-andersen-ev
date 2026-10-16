@@ -63,7 +63,7 @@ async def run(email: str, password: str, target_device_id: str | None) -> bool:
     _LOGGER.info("Authenticating as %s ...", email)
     client = KonnectClient(email, password)
     await client.authenticate_user()
-    _LOGGER.info("Authenticated — token expires in ~%ss", client.tokenExpiresIn)
+    _LOGGER.info("Authenticated — token expires in ~%ss", client.token_expires_in)
 
     # -- discover devices --------------------------------------------------
     _LOGGER.info("Fetching device list ...")

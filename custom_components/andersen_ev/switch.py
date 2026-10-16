@@ -1,7 +1,5 @@
 """Switch platform for Andersen EV charging schedules."""
 
-from __future__ import annotations
-
 import copy
 import logging
 from typing import Any
@@ -11,7 +9,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import ExtraStoredData, RestoredExtraData, RestoreEntity
+from homeassistant.helpers.restore_state import (
+    ExtraStoredData,
+    RestoredExtraData,
+    RestoreEntity,
+)
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
@@ -19,6 +21,7 @@ from .const import DOMAIN
 from .entity import AndersenEvDeviceInfoMixin
 from .grid_source import device_max_amps, grid_supplement_on_percent
 from .konnect import const
+from .konnect.exceptions import AndersenError
 
 PARALLEL_UPDATES = 1
 
@@ -32,9 +35,7 @@ SOLAR_FIELD_TO_PARAM = {
 }
 
 
-async def _async_build_switches_for_device(
-    coordinator: AndersenEvCoordinator, device
-) -> list[SwitchEntity]:
+async def _async_build_switches_for_device(coordinator: AndersenEvCoordinator, device) -> list[SwitchEntity]:
     """Build schedule and solar switches for a single device (fetches device info)."""
     # Get device info including schedule names and schedule slots
     device_info = await device.get_device_info()
@@ -43,13 +44,8 @@ async def _async_build_switches_for_device(
         return []
 
     # Get schedule slots from device_info
-    if (
-        "deviceStatus" not in device_info
-        or "scheduleSlotsArray" not in device_info["deviceStatus"]
-    ):
-        _LOGGER.warning(
-            "Could not retrieve schedule slots for %s", device.friendly_name
-        )
+    if "deviceStatus" not in device_info or "scheduleSlotsArray" not in device_info["deviceStatus"]:
+        _LOGGER.warning("Could not retrieve schedule slots for %s", device.friendly_name)
         return []
 
     schedule_slots = device_info["deviceStatus"]["scheduleSlotsArray"]
@@ -69,9 +65,7 @@ async def _async_build_switches_for_device(
         else:
             schedule_name = f"Schedule {idx + 1}"
 
-        entities.append(
-            AndersenEvScheduleSwitch(coordinator, device, idx, schedule_name)
-        )
+        entities.append(AndersenEvScheduleSwitch(coordinator, device, idx, schedule_name))
 
     return entities
 
@@ -103,14 +97,8 @@ async def async_setup_entry(
 
     def _handle_coordinator_update() -> None:
         """Schedule switch creation for any device not seen before."""
-        known_device_ids.intersection_update(
-            device.device_id for device in coordinator.data
-        )
-        new_devices = [
-            device
-            for device in coordinator.data
-            if device.device_id not in known_device_ids
-        ]
+        known_device_ids.intersection_update(device.device_id for device in coordinator.data)
+        new_devices = [device for device in coordinator.data if device.device_id not in known_device_ids]
         if not new_devices:
             return
         for device in new_devices:
@@ -125,9 +113,7 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_handle_coordinator_update))
 
 
-class AndersenEvScheduleSwitch(
-    AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SwitchEntity
-):  # pylint: disable=abstract-method
+class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SwitchEntity):  # pylint: disable=abstract-method
     """Representation of an Andersen EV charging schedule switch."""
 
     _attr_has_entity_name = True
@@ -171,10 +157,7 @@ class AndersenEvScheduleSwitch(
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return (
-                    self.coordinator.last_update_success
-                    and self._device.status_available
-                )
+                return self.coordinator.last_update_success and self._device.status_available
         return False
 
     @property
@@ -190,10 +173,7 @@ class AndersenEvScheduleSwitch(
         # This ensures we pick up changes made in the mobile app
         if self._device.last_status:
             status = self._device.last_status
-            if (
-                "scheduleSlotsArray" in status
-                and len(status["scheduleSlotsArray"]) > self._schedule_index
-            ):
+            if "scheduleSlotsArray" in status and len(status["scheduleSlotsArray"]) > self._schedule_index:
                 schedule_slot = status["scheduleSlotsArray"][self._schedule_index]
                 return schedule_slot["enabled"]
 
@@ -215,106 +195,75 @@ class AndersenEvScheduleSwitch(
 
     async def _set_schedule_enabled(self, enabled: bool) -> None:
         """Set the enabled state of the schedule."""
-        try:
-            # Get the current schedule slots from the device's last status
-            if (
-                not self._device.last_status
-                or "scheduleSlotsArray" not in self._device.last_status
-            ):
-                # If we don't have the data in the coordinator, fetch it
+        if self._device.last_status and "scheduleSlotsArray" in self._device.last_status:
+            schedule_slots = copy.deepcopy(self._device.last_status["scheduleSlotsArray"])
+        else:
+            # Not in the coordinator data, so fetch it directly
+            try:
                 device_info = await self._device.get_device_info()
-                if (
-                    not device_info
-                    or "deviceStatus" not in device_info
-                    or "scheduleSlotsArray" not in device_info["deviceStatus"]
-                ):
-                    raise HomeAssistantError(
-                        translation_domain=DOMAIN,
-                        translation_key="schedule_data_unavailable",
-                        translation_placeholders={
-                            "device_name": self._device.friendly_name
-                        },
-                    )
-                schedule_slots = copy.deepcopy(
-                    device_info["deviceStatus"]["scheduleSlotsArray"]
-                )
-            else:
-                # Use the data from the coordinator
-                schedule_slots = copy.deepcopy(
-                    self._device.last_status["scheduleSlotsArray"]
-                )
-
-            # Modify the enabled state of the specified schedule
-            if len(schedule_slots) > self._schedule_index:
-                # Update the enabled state
-                schedule_slots[self._schedule_index]["enabled"] = enabled
-
-                # Create the proper format for the API with sch0, sch1, etc. keys
-                schedule_to_update = schedule_slots[self._schedule_index]
-                formatted_slots = {f"sch{self._schedule_index}": schedule_to_update}
-
-                # Send the properly formatted schedule slots to the API
-                success = await self._send_set_schedules_mutation(
-                    formatted_slots, enabled
-                )
-
-                if success:
-                    # Update the local state immediately
-                    if self._device.last_status:
-                        if "scheduleSlotsArray" not in self._device.last_status:
-                            self._device.last_status["scheduleSlotsArray"] = (
-                                schedule_slots
-                            )
-                        elif (
-                            len(self._device.last_status["scheduleSlotsArray"])
-                            <= self._schedule_index
-                        ):
-                            # Extend the array if needed
-                            while (
-                                len(self._device.last_status["scheduleSlotsArray"])
-                                <= self._schedule_index
-                            ):
-                                self._device.last_status["scheduleSlotsArray"].append(
-                                    {}
-                                )
-
-                        # Update the enabled state
-                        self._device.last_status["scheduleSlotsArray"][
-                            self._schedule_index
-                        ]["enabled"] = enabled
-
-                    # Force the entity to update its state immediately
-                    self.async_write_ha_state()
-
-                    # Request a refresh of the coordinator data to update all entities
-                    await self.coordinator.async_request_refresh()
-                else:
-                    raise HomeAssistantError(
-                        translation_domain=DOMAIN,
-                        translation_key="schedule_update_failed",
-                        translation_placeholders={
-                            "device_name": self._device.friendly_name
-                        },
-                    )
-            else:
+            except AndersenError as err:
+                raise self._schedule_update_error(err) from err
+            if (
+                not device_info
+                or "deviceStatus" not in device_info
+                or "scheduleSlotsArray" not in device_info["deviceStatus"]
+            ):
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
-                    translation_key="schedule_index_out_of_range",
-                    translation_placeholders={
-                        "index": str(self._schedule_index),
-                        "device_name": self._device.friendly_name,
-                    },
+                    translation_key="schedule_data_unavailable",
+                    translation_placeholders={"device_name": self._device.friendly_name},
                 )
+            schedule_slots = copy.deepcopy(device_info["deviceStatus"]["scheduleSlotsArray"])
 
-        except Exception as err:  # pylint: disable=broad-exception-caught
+        if len(schedule_slots) <= self._schedule_index:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
-                translation_key="schedule_update_error",
+                translation_key="schedule_index_out_of_range",
                 translation_placeholders={
+                    "index": str(self._schedule_index),
                     "device_name": self._device.friendly_name,
-                    "error": str(err),
                 },
-            ) from err
+            )
+
+        schedule_slots[self._schedule_index]["enabled"] = enabled
+        # The API expects slots keyed as sch0, sch1, etc.
+        formatted_slots = {f"sch{self._schedule_index}": schedule_slots[self._schedule_index]}
+
+        try:
+            success = await self._send_set_schedules_mutation(formatted_slots, enabled)
+        except AndersenError as err:
+            raise self._schedule_update_error(err) from err
+        if not success:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="schedule_update_failed",
+                translation_placeholders={"device_name": self._device.friendly_name},
+            )
+
+        # Update the local state immediately
+        if self._device.last_status:
+            if "scheduleSlotsArray" not in self._device.last_status:
+                self._device.last_status["scheduleSlotsArray"] = schedule_slots
+            elif len(self._device.last_status["scheduleSlotsArray"]) <= self._schedule_index:
+                # Extend the array if needed
+                while len(self._device.last_status["scheduleSlotsArray"]) <= self._schedule_index:
+                    self._device.last_status["scheduleSlotsArray"].append({})
+
+            self._device.last_status["scheduleSlotsArray"][self._schedule_index]["enabled"] = enabled
+
+        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()
+
+    def _schedule_update_error(self, err: AndersenError) -> HomeAssistantError:
+        """Build the error raised when the API call itself fails."""
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="schedule_update_error",
+            translation_placeholders={
+                "device_name": self._device.friendly_name,
+                "error": str(err),
+            },
+        )
 
     async def _send_set_schedules_mutation(self, schedule_slots, enabled=None) -> bool:
         """Send the setSchedules mutation to the Andersen EV API."""
@@ -334,14 +283,10 @@ class AndersenEvScheduleSwitch(
         )
 
         if result is None:
-            _LOGGER.warning(
-                "Failed to update schedule for %s", self._device.friendly_name
-            )
+            _LOGGER.warning("Failed to update schedule for %s", self._device.friendly_name)
             return False
 
-        state_text = (
-            "enabled" if enabled else "disabled" if enabled is not None else "updated"
-        )
+        state_text = "enabled" if enabled else "disabled" if enabled is not None else "updated"
         _LOGGER.info(
             "Schedule %s for %s %s",
             self._schedule_name,
@@ -432,9 +377,7 @@ class AndersenEvSolarSwitch(CoordinatorEntity, SwitchEntity):  # pylint: disable
             )
 
             if success:
-                if self._device._last_solar_status is None:
-                    self._device._last_solar_status = {}
-                self._device._last_solar_status.update(changes)
+                self._device.update_solar_status_cache(changes)
                 self.async_write_ha_state()
                 await self.coordinator.async_request_refresh()
             else:
@@ -462,9 +405,7 @@ class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch, RestoreEntity):
 
     def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
         """Initialize the switch."""
-        super().__init__(
-            coordinator, device, "solarChargeAlways", "Supplement with grid power"
-        )
+        super().__init__(coordinator, device, "solarChargeAlways", "Supplement with grid power")
 
     async def async_added_to_hass(self) -> None:
         """Restore the percent to use when grid supplement is next turned on."""

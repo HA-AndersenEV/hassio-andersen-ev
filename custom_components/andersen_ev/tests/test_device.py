@@ -335,7 +335,7 @@ class TestDeviceGraphQLCalls:
     async def test_refresh_graphql_token(self, mock_device, mock_api):
         """Test _refresh_graphql_token refreshes the API client and returns its token/expiry."""
         mock_api.token = "new-token"
-        mock_api.tokenExpiryTime = 12345
+        mock_api.token_expiry_time = 12345
         mock_api.refresh_token = AsyncMock()
 
         token, expiry = await mock_device._refresh_graphql_token()

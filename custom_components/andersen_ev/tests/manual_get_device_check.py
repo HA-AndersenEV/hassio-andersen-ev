@@ -147,7 +147,7 @@ async def run(
     client = KonnectClient(email, password)
     await client.authenticate_user()
     token = client.token
-    _LOGGER.info("Authenticated — token expires in ~%ss", client.tokenExpiresIn)
+    _LOGGER.info("Authenticated — token expires in ~%ss", client.token_expires_in)
 
     environments = [("prod", PROD_BASE_URL), ("staging", STAGING_BASE_URL)]
     results: dict[str, bool] = {}

@@ -21,8 +21,8 @@ def mock_api():
     """Create a mock API client."""
     api = MagicMock()
     api.token = "test_token_12345"
-    api.tokenType = "Bearer"
-    api.tokenExpiryTime = None
+    api.token_type = "Bearer"
+    api.token_expiry_time = None
     api.ensure_valid_auth = AsyncMock()
     api.refresh_token = AsyncMock()
     return api

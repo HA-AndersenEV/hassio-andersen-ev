@@ -1,7 +1,5 @@
 """Number platform for Andersen EV solar controls."""
 
-from __future__ import annotations
-
 import logging
 
 from homeassistant.components.number import NumberDeviceClass, NumberEntity
@@ -31,11 +29,7 @@ async def async_setup_entry(
     """Set up the Andersen EV solar number entities."""
     coordinator = entry.runtime_data
 
-    entities = []
-    for device in coordinator.data:
-        entities.append(AndersenEvGridSourcePowerNumber(coordinator, device))
-
-    async_add_entities(entities)
+    async_add_entities(AndersenEvGridSourcePowerNumber(coordinator, device) for device in coordinator.data)
 
 
 class AndersenEvGridSourcePowerNumber(CoordinatorEntity, NumberEntity):  # pylint: disable=abstract-method
@@ -141,10 +135,9 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity, NumberEntity):  # pylin
             success = await self._device.set_solar(charge_always=charge_always, max_grid_charge_percent=percent)
 
             if success:
-                if self._device._last_solar_status is None:
-                    self._device._last_solar_status = {}
-                self._device._last_solar_status["solarMaxGridChargePercent"] = percent
-                self._device._last_solar_status["solarChargeAlways"] = charge_always
+                self._device.update_solar_status_cache(
+                    {"solarMaxGridChargePercent": percent, "solarChargeAlways": charge_always}
+                )
 
                 self._attr_native_value = grid_source_percent_to_kw(percent, max_amps)
                 self.async_write_ha_state()

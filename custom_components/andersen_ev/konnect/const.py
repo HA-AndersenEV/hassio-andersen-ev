@@ -1,3 +1,5 @@
+"""Constants for the Andersen Konnect API client."""
+
 DOMAIN = "konnect"
 
 GRAPHQL_URL = "https://graphql-mobile.andersen-ev.com"

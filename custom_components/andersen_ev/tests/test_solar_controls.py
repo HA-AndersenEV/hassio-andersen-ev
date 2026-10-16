@@ -55,6 +55,7 @@ def mock_device():
         "solarMaxGridChargePercent": 50,
     }
     device.last_solar_status = device._last_solar_status
+    device.update_solar_status_cache.side_effect = device._last_solar_status.update
     device.last_grid_charge_percent = None
     device.set_solar = AsyncMock(return_value=True)
     device.model_name = "Andersen A2"

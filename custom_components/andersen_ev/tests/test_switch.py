@@ -6,6 +6,7 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 
+from andersen_ev.konnect.exceptions import AndersenAuthError
 from andersen_ev.switch import AndersenEvScheduleSwitch, async_setup_entry
 
 
@@ -479,6 +480,19 @@ class TestSetScheduleEnabled:
         with pytest.raises(HomeAssistantError):
             await switch._set_schedule_enabled(True)
 
+        coordinator.async_request_refresh.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_api_error_raises_update_error(self):
+        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
+        coordinator = _make_coordinator([device])
+        switch = _make_switch(coordinator, device, index=0)
+        switch._send_set_schedules_mutation = AsyncMock(side_effect=AndersenAuthError("expired"))
+
+        with pytest.raises(HomeAssistantError) as exc_info:
+            await switch._set_schedule_enabled(True)
+
+        assert exc_info.value.translation_key == "schedule_update_error"
         coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio

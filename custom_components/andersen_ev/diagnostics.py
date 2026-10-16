@@ -45,10 +45,10 @@ def _client_diagnostics(api) -> dict[str, Any]:
     data = {
         "email": api.email,
         "token": api.token,
-        "tokenType": api.tokenType,
-        "tokenExpiresIn": api.tokenExpiresIn,
-        "tokenExpiryTime": api.tokenExpiryTime,
-        "refreshToken": api.refreshToken,
-        "deviceKey": api.deviceKey,
+        "tokenType": api.token_type,
+        "tokenExpiresIn": api.token_expires_in,
+        "tokenExpiryTime": api.token_expiry_time,
+        "refreshToken": api.refresh_token_value,
+        "deviceKey": api.device_key,
     }
     return async_redact_data(data, TO_REDACT)

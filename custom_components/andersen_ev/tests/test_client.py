@@ -51,7 +51,7 @@ class TestAuthenticate:
 
     @pytest.mark.asyncio
     async def test_authenticate_captures_device_key_and_confirms_device(self):
-        """authenticate_user() stores deviceKey and calls confirm_device on NewDeviceMetadata."""
+        """authenticate_user() stores device_key and calls confirm_device on NewDeviceMetadata."""
         client = KonnectClient("user@example.com", "password")
         auth_response = _make_srp_auth_response(device_key="dk-1")
 
@@ -66,14 +66,14 @@ class TestAuthenticate:
             ):
                 await client.authenticate_user()
 
-        assert client.deviceKey == "dk-1"
+        assert client.device_key == "dk-1"
         assert client.token == "test-id-token"
-        assert client.refreshToken == "test-refresh-token"
+        assert client.refresh_token_value == "test-refresh-token"
         mock_aws_srp.confirm_device.assert_called_once_with(auth_response)
 
     @pytest.mark.asyncio
     async def test_authenticate_no_device_metadata_leaves_device_key_none(self):
-        """authenticate_user() leaves deviceKey as None when no NewDeviceMetadata present."""
+        """authenticate_user() leaves device_key as None when no NewDeviceMetadata present."""
         client = KonnectClient("user@example.com", "password")
         auth_response = _make_srp_auth_response()  # no NewDeviceMetadata
 
@@ -88,7 +88,7 @@ class TestAuthenticate:
             ):
                 await client.authenticate_user()
 
-        assert client.deviceKey is None
+        assert client.device_key is None
         assert client.token == "test-id-token"
         mock_aws_srp.confirm_device.assert_not_called()
 
@@ -111,9 +111,9 @@ class TestAuthenticate:
                 # Should NOT raise despite confirm_device failure
                 await client.authenticate_user()
 
-        # The token should still be set; deviceKey captured from NewDeviceMetadata
+        # The token should still be set; device_key captured from NewDeviceMetadata
         assert client.token == "test-id-token"
-        assert client.deviceKey == "dk-warn"
+        assert client.device_key == "dk-warn"
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +128,8 @@ class TestRefreshToken:
     async def test_refresh_uses_device_key(self):
         """refresh_token() calls REFRESH_TOKEN_AUTH with DEVICE_KEY and updates token fields."""
         client = KonnectClient("user@example.com", "password")
-        client.refreshToken = "rt"
-        client.deviceKey = "dk"
+        client.refresh_token_value = "rt"
+        client.device_key = "dk"
 
         mock_cognito = MagicMock()
         mock_cognito.initiate_auth.return_value = _make_cognito_refresh_response()
@@ -150,15 +150,15 @@ class TestRefreshToken:
 
         # Verify token fields were updated
         assert client.token == "refreshed-id-token"
-        assert client.tokenType == "Bearer"
-        assert client.tokenExpiresIn == 3600
+        assert client.token_type == "Bearer"
+        assert client.token_expires_in == 3600
 
     @pytest.mark.asyncio
     async def test_dead_refresh_token_falls_back_to_full_auth(self):
         """refresh_token() falls back to authenticate_user() on NotAuthorizedException."""
         client = KonnectClient("user@example.com", "password")
-        client.refreshToken = "expired-rt"
-        client.deviceKey = "dk"
+        client.refresh_token_value = "expired-rt"
+        client.device_key = "dk"
 
         not_authorized = ClientError(
             {"Error": {"Code": "NotAuthorizedException", "Message": "Invalid Refresh Token"}},
@@ -177,7 +177,7 @@ class TestRefreshToken:
 
     @pytest.mark.asyncio
     async def test_no_token_or_device_key_falls_back_to_full_auth(self):
-        """refresh_token() falls back immediately when refreshToken or deviceKey is absent."""
+        """refresh_token() falls back immediately when refresh_token_value or device_key is absent."""
         client = KonnectClient("user@example.com", "password")
         # Both are None by default — guard should trigger before any Cognito call
 
@@ -188,10 +188,10 @@ class TestRefreshToken:
 
     @pytest.mark.asyncio
     async def test_only_device_key_missing_falls_back_to_full_auth(self):
-        """refresh_token() falls back when refreshToken is set but deviceKey is None."""
+        """refresh_token() falls back when refresh_token_value is set but device_key is None."""
         client = KonnectClient("user@example.com", "password")
-        client.refreshToken = "rt"
-        # deviceKey remains None
+        client.refresh_token_value = "rt"
+        # device_key remains None
 
         with patch.object(client, "authenticate_user", new_callable=AsyncMock) as mock_full_auth:
             await client.refresh_token()
@@ -200,10 +200,10 @@ class TestRefreshToken:
 
     @pytest.mark.asyncio
     async def test_refresh_token_not_rotated_when_absent_from_response(self):
-        """refresh_token() keeps the existing refreshToken when Cognito does not return a new one."""
+        """refresh_token() keeps the existing refresh_token_value when Cognito does not return a new one."""
         client = KonnectClient("user@example.com", "password")
-        client.refreshToken = "original-rt"
-        client.deviceKey = "dk"
+        client.refresh_token_value = "original-rt"
+        client.device_key = "dk"
 
         mock_cognito = MagicMock()
         mock_cognito.initiate_auth.return_value = _make_cognito_refresh_response()
@@ -213,14 +213,14 @@ class TestRefreshToken:
             await client.refresh_token()
 
         # The stored refresh token must NOT have been overwritten
-        assert client.refreshToken == "original-rt"
+        assert client.refresh_token_value == "original-rt"
 
     @pytest.mark.asyncio
     async def test_refresh_updates_refresh_token_if_rotated(self):
-        """refresh_token() replaces refreshToken when Cognito unexpectedly rotates it."""
+        """refresh_token() replaces refresh_token_value when Cognito unexpectedly rotates it."""
         client = KonnectClient("user@example.com", "password")
-        client.refreshToken = "old-rt"
-        client.deviceKey = "dk"
+        client.refresh_token_value = "old-rt"
+        client.device_key = "dk"
 
         rotated_response = {
             "AuthenticationResult": {
@@ -238,14 +238,14 @@ class TestRefreshToken:
             mock_boto3.client.return_value = mock_cognito
             await client.refresh_token()
 
-        assert client.refreshToken == "rotated-rt"
+        assert client.refresh_token_value == "rotated-rt"
 
     @pytest.mark.asyncio
     async def test_non_auth_client_error_is_reraised(self):
         """refresh_token() re-raises ClientError codes other than NotAuthorizedException."""
         client = KonnectClient("user@example.com", "password")
-        client.refreshToken = "rt"
-        client.deviceKey = "dk"
+        client.refresh_token_value = "rt"
+        client.device_key = "dk"
 
         service_error = ClientError(
             {"Error": {"Code": "TooManyRequestsException", "Message": "slow down"}},
@@ -284,16 +284,16 @@ class TestExpiryStr:
     """Tests for the _expiry_str() helper."""
 
     def test_unknown_when_expiry_not_set(self):
-        """_expiry_str() returns 'unknown' when tokenExpiryTime is not set."""
+        """_expiry_str() returns 'unknown' when token_expiry_time is not set."""
         client = KonnectClient("user@example.com", "password")
         assert client._expiry_str() == "unknown"
 
     def test_formats_local_time_when_expiry_set(self):
-        """_expiry_str() formats tokenExpiryTime as a local time string."""
+        """_expiry_str() formats token_expiry_time as a local time string."""
         client = KonnectClient("user@example.com", "password")
-        client.tokenExpiryTime = time.time() + 100
+        client.token_expiry_time = time.time() + 100
 
-        expected = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(client.tokenExpiryTime))
+        expected = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(client.token_expiry_time))
         assert client._expiry_str() == expected
 
 
@@ -310,34 +310,34 @@ class TestIsTokenValid:
         """is_token_valid() is False when there is no token."""
         client = KonnectClient("user@example.com", "password")
         client.token = None
-        client.tokenExpiryTime = time.time() + 100
+        client.token_expiry_time = time.time() + 100
 
         assert await client.is_token_valid() is False
 
     @pytest.mark.asyncio
     async def test_no_expiry_time_is_invalid(self):
-        """is_token_valid() is False when tokenExpiryTime is not set."""
+        """is_token_valid() is False when token_expiry_time is not set."""
         client = KonnectClient("user@example.com", "password")
         client.token = "tok"
-        client.tokenExpiryTime = None
+        client.token_expiry_time = None
 
         assert await client.is_token_valid() is False
 
     @pytest.mark.asyncio
     async def test_expired_token_is_invalid(self):
-        """is_token_valid() is False once tokenExpiryTime has passed."""
+        """is_token_valid() is False once token_expiry_time has passed."""
         client = KonnectClient("user@example.com", "password")
         client.token = "tok"
-        client.tokenExpiryTime = time.time() - 10
+        client.token_expiry_time = time.time() - 10
 
         assert await client.is_token_valid() is False
 
     @pytest.mark.asyncio
     async def test_valid_token_is_valid(self):
-        """is_token_valid() is True while tokenExpiryTime is in the future."""
+        """is_token_valid() is True while token_expiry_time is in the future."""
         client = KonnectClient("user@example.com", "password")
         client.token = "tok"
-        client.tokenExpiryTime = time.time() + 1000
+        client.token_expiry_time = time.time() + 1000
 
         assert await client.is_token_valid() is True
 
@@ -367,7 +367,7 @@ class TestEnsureValidAuth:
         client = KonnectClient("user@example.com", "password")
         client.is_token_valid = AsyncMock(return_value=True)
         client.refresh_token = AsyncMock()
-        client.tokenExpiryTime = time.time() + 1000
+        client.token_expiry_time = time.time() + 1000
 
         await client.ensure_valid_auth()
 

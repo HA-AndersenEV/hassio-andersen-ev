@@ -53,6 +53,12 @@ class KonnectDevice:
         """Return the last known solar status."""
         return self._last_solar_status or {}
 
+    def update_solar_status_cache(self, changes: dict[str, Any]) -> None:
+        """Merge locally applied solar changes into the cached solar status."""
+        if self._last_solar_status is None:
+            self._last_solar_status = {}
+        self._last_solar_status.update(changes)
+
     @property
     def last_charge(self):
         """Return the last known charge session data."""
@@ -68,14 +74,14 @@ class KonnectDevice:
             self._graphql_client = GraphQLClient(
                 token=self.api.token,
                 token_refresh=self._refresh_graphql_token,
-                token_expiry_time=getattr(self.api, "tokenExpiryTime", None),
+                token_expiry_time=getattr(self.api, "token_expiry_time", None),
             )
         return self._graphql_client
 
     async def _refresh_graphql_token(self):
         """Refresh authentication and return new token with expiry time."""
         await self.api.refresh_token()
-        return self.api.token, getattr(self.api, "tokenExpiryTime", None)
+        return self.api.token, getattr(self.api, "token_expiry_time", None)
 
     async def close(self):
         """Clean up the GraphQL client resources."""
