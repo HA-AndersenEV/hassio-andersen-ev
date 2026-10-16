@@ -152,6 +152,39 @@ class KonnectDevice:
             )
         return success
 
+    async def charge_now(self) -> bool:
+        """Start charging immediately, as the app's Charge now button does."""
+        _LOGGER.debug(
+            "Attempting to start charging now for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
+        success = await self._run_command("chargeNow")
+        if not success:
+            _LOGGER.warning(
+                "Failed to start charging for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
+        return success
+
+    async def stop_charging(self) -> bool:
+        """Stop charging, as the app's Stop charging button does."""
+        _LOGGER.debug(
+            "Attempting to stop charging for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
+        # Matches the app, which sends userForceStop and then stopChargeNow.
+        success = await self._run_command("userForceStop") and await self._run_command("stopChargeNow")
+        if not success:
+            _LOGGER.warning(
+                "Failed to stop charging for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
+        return success
+
     async def disable_all_schedules(self):
         """Disable all charging schedules for the device."""
         _LOGGER.debug(
