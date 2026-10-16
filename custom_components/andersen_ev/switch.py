@@ -310,6 +310,7 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
         super().__init__(coordinator)
         self._device = device
         self._solar_field = solar_field
+        self._setting_name = name_suffix
         self._attr_name = f"{device.friendly_name} {name_suffix}"
         self._attr_unique_id = f"{device.device_id}_solar_{solar_field}"
         self._attr_device_info = {
@@ -339,7 +340,7 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success
+                return self.coordinator.last_update_success and self._device.status_available
         return False
 
     @property
@@ -369,25 +370,35 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
 
     async def _set_solar_value(self, value: bool) -> None:
         """Set the solar value."""
+        if (changes := self._solar_changes(value)) is None:
+            return
         try:
-            if (changes := self._solar_changes(value)) is None:
-                return
             success = await self._device.set_solar(
                 **{SOLAR_FIELD_TO_PARAM[field]: field_value for field, field_value in changes.items()}
             )
+        except AndersenError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="solar_update_error",
+                translation_placeholders={
+                    "setting": self._setting_name,
+                    "device_name": self._device.friendly_name,
+                    "error": str(err),
+                },
+            ) from err
+        if not success:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="solar_update_failed",
+                translation_placeholders={
+                    "setting": self._setting_name,
+                    "device_name": self._device.friendly_name,
+                },
+            )
 
-            if success:
-                self._device.update_solar_status_cache(changes)
-                self.async_write_ha_state()
-                await self.coordinator.async_request_refresh()
-            else:
-                _LOGGER.warning(
-                    "Failed to update solar setting %s for %s",
-                    self._solar_field,
-                    self._device.friendly_name,
-                )
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error("Error setting solar value: %s", err)
+        self._device.update_solar_status_cache(changes)
+        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()
 
 
 class AndersenEvBoostSwitch(AndersenEvSolarSwitch):

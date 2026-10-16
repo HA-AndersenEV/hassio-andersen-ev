@@ -5,6 +5,7 @@ import logging
 from homeassistant.components.number import NumberDeviceClass, NumberEntity
 from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -17,6 +18,7 @@ from .grid_source import (
     grid_source_percent_to_kw,
     max_grid_source_power_kw,
 )
+from .konnect.exceptions import AndersenError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,8 +30,21 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Andersen EV solar number entities."""
     coordinator = entry.runtime_data
+    known_device_ids: set[str] = set()
 
-    async_add_entities(AndersenEvGridSourcePowerNumber(coordinator, device) for device in coordinator.data)
+    def _entities_for_new_devices() -> list[NumberEntity]:
+        """Build number entities for any device not seen before."""
+        known_device_ids.intersection_update(device.device_id for device in coordinator.data)
+        new_devices = [device for device in coordinator.data if device.device_id not in known_device_ids]
+        known_device_ids.update(device.device_id for device in new_devices)
+        return [AndersenEvGridSourcePowerNumber(coordinator, device) for device in new_devices]
+
+    def _handle_coordinator_update() -> None:
+        if new_entities := _entities_for_new_devices():
+            async_add_entities(new_entities)
+
+    async_add_entities(_entities_for_new_devices())
+    entry.async_on_unload(coordinator.async_add_listener(_handle_coordinator_update))
 
 
 class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], NumberEntity):  # pylint: disable=abstract-method
@@ -77,7 +92,7 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success
+                return self.coordinator.last_update_success and self._device.status_available
         return False
 
     def _refresh_device(self) -> None:
@@ -129,24 +144,33 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
             )
             value = 0.0
         percent = grid_source_kw_to_percent(value, max_amps)
+        # The API only honours chargeAlways on with a non-zero percent, and off with 0.
+        charge_always = percent > 0
         try:
-            # The API only honours chargeAlways on with a non-zero percent, and off with 0.
-            charge_always = percent > 0
             success = await self._device.set_solar(charge_always=charge_always, max_grid_charge_percent=percent)
+        except AndersenError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="solar_update_error",
+                translation_placeholders={
+                    "setting": "Grid source power",
+                    "device_name": self._device.friendly_name,
+                    "error": str(err),
+                },
+            ) from err
+        if not success:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="solar_update_failed",
+                translation_placeholders={
+                    "setting": "Grid source power",
+                    "device_name": self._device.friendly_name,
+                },
+            )
 
-            if success:
-                self._device.update_solar_status_cache(
-                    {"solarMaxGridChargePercent": percent, "solarChargeAlways": charge_always}
-                )
-
-                self._attr_native_value = grid_source_percent_to_kw(percent, max_amps)
-                self.async_write_ha_state()
-
-                await self.coordinator.async_request_refresh()
-            else:
-                _LOGGER.warning(
-                    "Failed to update grid source power for %s",
-                    self._device.friendly_name,
-                )
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error("Error setting grid source power: %s", err)
+        self._device.update_solar_status_cache(
+            {"solarMaxGridChargePercent": percent, "solarChargeAlways": charge_always}
+        )
+        self._attr_native_value = grid_source_percent_to_kw(percent, max_amps)
+        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.const import UnitOfPower
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 
 from andersen_ev.grid_source import (
@@ -11,7 +12,8 @@ from andersen_ev.grid_source import (
     grid_source_percent_to_kw,
     max_grid_source_power_kw,
 )
-from andersen_ev.number import AndersenEvGridSourcePowerNumber
+from andersen_ev.konnect.exceptions import AndersenAuthError
+from andersen_ev.number import AndersenEvGridSourcePowerNumber, async_setup_entry
 from andersen_ev.switch import (
     AndersenEvBoostSwitch,
     AndersenEvSolarChargeAlwaysSwitch,
@@ -43,6 +45,7 @@ def mock_device():
     device.device_id = "test_device_123"
     device.friendly_name = "Test Charger"
     device.user_lock = False
+    device.status_available = True
     device.last_status = {
         "sysProductName": "Andersen A2",
         "sysHwVersion": "1.0",
@@ -365,3 +368,81 @@ class TestAndersenEvGridSourcePowerNumber:
         number = AndersenEvGridSourcePowerNumber(mock_coordinator, mock_device)
         assert number.unique_id == "test_device_123_grid_source_power"
         assert number.native_unit_of_measurement == UnitOfPower.KILO_WATT
+
+
+SOLAR_ENTITY_CLASSES = [
+    pytest.param(AndersenEvBoostSwitch, id="boost_switch"),
+    pytest.param(AndersenEvSolarChargeAlwaysSwitch, id="charge_always_switch"),
+    pytest.param(AndersenEvSolarChargeOutsideScheduleSwitch, id="charge_outside_schedule_switch"),
+    pytest.param(AndersenEvGridSourcePowerNumber, id="grid_source_power_number"),
+]
+
+
+async def _write_solar_entity(entity) -> None:
+    if isinstance(entity, AndersenEvGridSourcePowerNumber):
+        await entity.async_set_native_value(3.6)
+    else:
+        await entity.async_turn_on()
+
+
+@pytest.mark.parametrize("entity_class", SOLAR_ENTITY_CLASSES)
+@pytest.mark.parametrize("status_available", [True, False])
+def test_solar_entity_available_follows_device_status(
+    mock_coordinator: MagicMock, mock_device: MagicMock, entity_class: type, status_available: bool
+) -> None:
+    """A failed per-device status fetch makes the entity unavailable even though the refresh succeeded."""
+    mock_coordinator.data = [mock_device]
+    mock_device.status_available = status_available
+
+    assert entity_class(mock_coordinator, mock_device).available is status_available
+
+
+@pytest.mark.parametrize("entity_class", SOLAR_ENTITY_CLASSES)
+@pytest.mark.parametrize(
+    ("set_solar", "translation_key"),
+    [
+        pytest.param(AsyncMock(return_value=False), "solar_update_failed", id="rejected"),
+        pytest.param(AsyncMock(side_effect=AndersenAuthError("expired")), "solar_update_error", id="api_error"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_solar_entity_write_failure_raises(
+    mock_coordinator: MagicMock,
+    mock_device: MagicMock,
+    entity_class: type,
+    set_solar: AsyncMock,
+    translation_key: str,
+) -> None:
+    """A write the charger didn't apply is reported to the caller and leaves the cache untouched."""
+    mock_coordinator.data = [mock_device]
+    mock_device.set_solar = set_solar
+    cached = dict(mock_device._last_solar_status)
+    entity = entity_class(mock_coordinator, mock_device)
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await _write_solar_entity(entity)
+
+    assert exc_info.value.translation_key == translation_key
+    assert mock_device._last_solar_status == cached
+    mock_coordinator.async_request_refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_number_setup_adds_entities_for_new_devices(mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
+    """Chargers discovered after setup get a grid source power entity without a reload."""
+    mock_coordinator.data = []
+    entry = MagicMock()
+    entry.runtime_data = mock_coordinator
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(mock_coordinator.hass, entry, async_add_entities)
+    async_add_entities.assert_called_once_with([])
+    listener = mock_coordinator.async_add_listener.call_args.args[0]
+
+    mock_coordinator.data = [mock_device]
+    listener()
+    listener()
+
+    assert async_add_entities.call_count == 2
+    (added,) = async_add_entities.call_args.args
+    assert [entity.unique_id for entity in added] == ["test_device_123_grid_source_power"]

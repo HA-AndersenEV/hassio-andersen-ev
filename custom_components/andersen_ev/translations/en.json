@@ -83,7 +83,9 @@
     "schedule_data_unavailable": { "message": "Failed to retrieve schedule data for {device_name}" },
     "schedule_update_failed": { "message": "Failed to update schedule for {device_name}" },
     "schedule_index_out_of_range": { "message": "Schedule index {index} is out of range for {device_name}" },
-    "schedule_update_error": { "message": "Failed to update schedule for {device_name}: {error}" }
+    "schedule_update_error": { "message": "Failed to update schedule for {device_name}: {error}" },
+    "solar_update_failed": { "message": "Failed to update {setting} for {device_name}" },
+    "solar_update_error": { "message": "Failed to update {setting} for {device_name}: {error}" }
   },
   "issues": {
     "api_shape_changed": {

@@ -263,6 +263,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 self._mark_device_unavailable(device, "no status returned")
                 continue
 
+            device.update_solar_status_from_device_status(status)
             device.status_available = True
             if self._device_availability.get(device.device_id) is False:
                 _LOGGER.info("Device %s is back online", device.friendly_name)
@@ -272,12 +273,6 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 await device.get_last_charge()
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Failed to fetch last charge for %s: %s", device.friendly_name, err)
-
-            # Fetch solar status for each device
-            try:
-                await device.get_solar()
-            except UpdateFailed as err:
-                _LOGGER.debug("Error getting solar status for %s: %s", device.friendly_name, err)
 
         return self.devices
 

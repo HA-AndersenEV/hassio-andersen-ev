@@ -106,6 +106,8 @@ class TestAsyncUpdateData:
 
         assert result == [device]
         device.get_detailed_device_status.assert_awaited_once()
+        device.update_solar_status_from_device_status.assert_called_once_with({"online": True})
+        device.get_solar.assert_not_awaited()
         device.get_last_charge.assert_awaited_once()
         assert device.status_available is True
         assert coordinator._device_availability[device.device_id] is True

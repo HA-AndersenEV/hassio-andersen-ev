@@ -354,6 +354,10 @@ class KonnectDevice:
             )
             return None
 
+        return self.update_solar_status_from_device_status(status)
+
+    def update_solar_status_from_device_status(self, status: dict[str, Any]) -> dict[str, Any]:
+        """Populate the solar settings cache from an already-fetched device status."""
         # The API only exposes this as sysScheduleLock, which is the inverse of "charge outside schedule".
         schedule_lock = status.get("sysScheduleLock")
         self._last_solar_status = {
