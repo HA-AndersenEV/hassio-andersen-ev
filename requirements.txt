@@ -1,2 +1,5 @@
-pycognito==2024.5.1
-gql[aiohttp]>=4.4.0
+pycognito>=2024.5.1
+# Not >=4.4.0: gql 4.4.0 requires graphql-core>=3.3, but Home Assistant
+# 2026.10.1+ constrains graphql-core<3.3 (home-assistant/core#185206), which
+# makes 4.0.0 the newest installable gql there. Keep in sync with manifest.json.
+gql[aiohttp]>=4.0.0
