@@ -1,5 +1,6 @@
 """Konnect device interface for Andersen EV chargers."""
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,8 @@ class KonnectDevice:
     _last_status: dict[str, Any] | None = None
     _last_charge: dict[str, Any] | None = None
     _last_solar_status: dict[str, Any] | None = None
+    # The REST getDevice userDevice object, which has fields GraphQL doesn't expose.
+    _last_user_device: dict[str, Any] | None = None
     # Restored when grid supplement is turned back on, since turning it off zeroes the percent.
     last_grid_charge_percent: int | None = None
     model_name: str | None = None
@@ -37,6 +40,7 @@ class KonnectDevice:
         self._last_status = None
         self._last_charge = None
         self._last_solar_status = None
+        self._last_user_device = None
         self.last_grid_charge_percent = None
         self.model_name = None
         self.currency = None
@@ -58,6 +62,22 @@ class KonnectDevice:
         if self._last_solar_status is None:
             self._last_solar_status = {}
         self._last_solar_status.update(changes)
+
+    @property
+    def last_rest_status(self) -> dict[str, Any]:
+        """Return the status object from the last REST getDevice call."""
+        return (self._last_user_device or {}).get("status") or {}
+
+    def update_rest_status_cache(self, changes: dict[str, Any]) -> None:
+        """Merge locally applied changes into the cached REST status."""
+        if self._last_user_device is None:
+            self._last_user_device = {}
+        self._last_user_device.setdefault("status", {}).update(changes)
+
+    async def get_user_device(self) -> dict[str, Any]:
+        """Fetch and cache the REST getDevice userDevice object."""
+        self._last_user_device = await self.api.getDevice(self.device_id)
+        return self._last_user_device
 
     @property
     def last_charge(self):
@@ -185,6 +205,23 @@ class KonnectDevice:
             )
         return success
 
+    async def set_user_max_amps(self, amps: int) -> bool:
+        """Set the user maximum charge current, as the app's power settings do."""
+        _LOGGER.debug(
+            "Setting user max charge current for device %s (%s) to %s A",
+            self.device_id,
+            self.friendly_name,
+            amps,
+        )
+        success = await self._run_command("userAmpSet", {"userSetChargeAmpMax": amps})
+        if not success:
+            _LOGGER.warning(
+                "Failed to set user max charge current for device %s (%s)",
+                self.device_id,
+                self.friendly_name,
+            )
+        return success
+
     async def disable_all_schedules(self):
         """Disable all charging schedules for the device."""
         _LOGGER.debug(
@@ -199,7 +236,7 @@ class KonnectDevice:
             " { id name return_value } }"
         )
 
-        _LOGGER.debug("Sending API command to disable all schedules for device %s", self.device_id)
+        _LOGGER.debug("Sending GraphQL setAllSchedulesDisabled for device %s", self.device_id)
 
         result = await self.graphql_client.execute_mutation(
             operation_name="setAllSchedulesDisabled",
@@ -210,32 +247,34 @@ class KonnectDevice:
         if result is None:
             return False
 
-        _LOGGER.debug("API disable all schedules response: %s", result)
+        _LOGGER.debug("GraphQL setAllSchedulesDisabled response: %s", result)
         return True
 
-    async def _run_command(self, function):
+    async def _run_command(self, function, params: dict[str, Any] | None = None):
         """Run a command on the device with automatic token refresh."""
-        _LOGGER.debug("Sending API command: %s for device %s", function, self.device_id)
+        _LOGGER.debug("Sending GraphQL runAEVCommand %s %s for device %s", function, params or "", self.device_id)
+
+        variables: dict[str, Any] = {"deviceId": self.device_id, "functionName": function}
+        if params is not None:
+            # The API takes params as a JSON-encoded string.
+            variables["params"] = json.dumps(params)
 
         result = await self.graphql_client.execute_mutation(
             operation_name="runAEVCommand",
             mutation=const.GRAPHQL_RUN_COMMAND_QUERY,
-            variables={
-                "deviceId": self.device_id,
-                "functionName": function,
-            },
+            variables=variables,
         )
 
         if result is None:
             return False
 
-        _LOGGER.debug("API command response: %s", result)
+        _LOGGER.debug("GraphQL runAEVCommand %s response: %s", function, result)
         return True
 
     async def get_detailed_device_status(self):
         """Get the detailed status of the device."""
         _LOGGER.debug(
-            "Fetching detailed status for device %s (%s)",
+            "Calling GraphQL getDeviceStatus for device %s (%s)",
             self.device_id,
             self.friendly_name,
         )
@@ -250,7 +289,7 @@ class KonnectDevice:
             return None
 
         if "getDevice" not in result or "deviceStatus" not in result["getDevice"]:
-            _LOGGER.warning("Invalid response format from device status request")
+            _LOGGER.warning("Invalid response format from GraphQL getDeviceStatus")
             return None
 
         # Store the model name if available
@@ -334,6 +373,11 @@ class KonnectDevice:
 
     async def get_last_charge(self):
         """Get the last charge session data."""
+        _LOGGER.debug(
+            "Calling GraphQL getDeviceCalculatedChargeLogs for device %s (%s)",
+            self.device_id,
+            self.friendly_name,
+        )
         result = await self.graphql_client.execute_query(
             operation_name="getDeviceCalculatedChargeLogs",
             query=const.GRAPHQL_DEVICE_CHARGE_LOGS_QUERY,
@@ -349,7 +393,7 @@ class KonnectDevice:
             return None
 
         if "getDevice" not in result or "deviceCalculatedChargeLogs" not in result["getDevice"]:
-            _LOGGER.warning("Invalid response format from last charge request")
+            _LOGGER.warning("Invalid response format from GraphQL getDeviceCalculatedChargeLogs")
             return None
 
         device_logs = result["getDevice"]["deviceCalculatedChargeLogs"]
@@ -445,7 +489,7 @@ class KonnectDevice:
     async def get_device_info(self):
         """Get the detailed device information."""
         _LOGGER.debug(
-            "Fetching detailed info for device %s (%s)",
+            "Calling GraphQL getDevice for device %s (%s)",
             self.device_id,
             self.friendly_name,
         )
@@ -460,12 +504,11 @@ class KonnectDevice:
             return None
 
         if "getDevice" not in result:
-            _LOGGER.warning("Invalid response format from device info request")
+            _LOGGER.warning("Invalid response format from GraphQL getDevice")
             return None
 
         device_info = result["getDevice"]
         currency = (device_info.get("deviceInfo") or {}).get("currency")
         if currency:
             self.currency = currency
-        _LOGGER.debug("Successfully retrieved device info for %s", self.friendly_name)
         return device_info

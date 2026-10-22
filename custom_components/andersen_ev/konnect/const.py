@@ -6,7 +6,9 @@ GRAPHQL_URL = "https://graphql-mobile.andersen-ev.com"
 GRAPHQL_USER_MAP_URL = "https://graphql.andersen-ev.com/get-pending-user"
 
 API_DEVICES_URL = "https://mobile.andersen-ev.com/api/getDevices"
-API_DEVICE_URL = "https://mobile.andersen-ev.com/api/getDevice?deviceId="
+# The app's only mobile REST host; despite the name it serves live data, and far more of it
+# than mobile.andersen-ev.com does.
+API_DEVICE_URL = "https://mobile-staging.andersen-ev.com/api/getDevice"
 
 GRAPHQL_SET_SCHEDULES_MUTATION = """
 mutation setSchedules($deviceId: ID!, $scheduleSlots: ScheduleSlotsInput!) {

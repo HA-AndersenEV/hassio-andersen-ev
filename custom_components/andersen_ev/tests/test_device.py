@@ -163,6 +163,70 @@ class TestDeviceGraphQLCalls:
         assert await mock_device.charge_now() is False
 
     @pytest.mark.asyncio
+    async def test_set_user_max_amps(self, mock_device: KonnectDevice, graphql_command_success_response: dict) -> None:
+        """The user max current is sent as userAmpSet with JSON-encoded params, as the app does."""
+        with patch.object(
+            mock_device.graphql_client,
+            "execute_mutation",
+            AsyncMock(return_value=graphql_command_success_response),
+        ) as execute_mutation:
+            assert await mock_device.set_user_max_amps(16) is True
+
+        assert execute_mutation.call_args.kwargs["variables"] == {
+            "deviceId": "test_device_123",
+            "functionName": "userAmpSet",
+            "params": '{"userSetChargeAmpMax": 16}',
+        }
+
+    @pytest.mark.parametrize(
+        ("method", "expected_log"),
+        [
+            pytest.param("get_detailed_device_status", "Calling GraphQL getDeviceStatus for device", id="status"),
+            pytest.param("get_device_info", "Calling GraphQL getDevice for device", id="info"),
+            pytest.param(
+                "get_last_charge", "Calling GraphQL getDeviceCalculatedChargeLogs for device", id="charge_logs"
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_graphql_calls_are_logged_as_graphql(
+        self, mock_device: KonnectDevice, caplog: pytest.LogCaptureFixture, method: str, expected_log: str
+    ) -> None:
+        """Debug logs name the GraphQL operation, so they can't be confused with the REST getDevice."""
+        with (
+            caplog.at_level(logging.DEBUG),
+            patch.object(mock_device.graphql_client, "execute_query", AsyncMock(return_value=None)),
+        ):
+            await getattr(mock_device, method)()
+
+        assert f"{expected_log} test_device_123 (Test Device)" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_set_user_max_amps_failure(self, mock_device: KonnectDevice) -> None:
+        """set_user_max_amps returns False when the command fails."""
+        with patch.object(mock_device.graphql_client, "execute_mutation", AsyncMock(return_value=None)):
+            assert await mock_device.set_user_max_amps(16) is False
+
+    @pytest.mark.asyncio
+    async def test_get_user_device_caches_rest_status(self, mock_device: KonnectDevice, mock_api) -> None:
+        """The REST userDevice is cached and its status exposed for entities."""
+        user_device = {"device": {}, "info": {}, "status": {"sysUserMaxChargeAmpSet": 24}}
+        mock_api.getDevice = AsyncMock(return_value=user_device)
+
+        assert mock_device.last_rest_status == {}
+        assert await mock_device.get_user_device() == user_device
+
+        mock_api.getDevice.assert_awaited_once_with("test_device_123")
+        assert mock_device.last_rest_status == {"sysUserMaxChargeAmpSet": 24}
+
+    def test_update_rest_status_cache(self, mock_device: KonnectDevice) -> None:
+        """Locally applied changes are merged into the REST status, even before the first fetch."""
+        mock_device.update_rest_status_cache({"sysUserMaxChargeAmpSet": 10})
+        mock_device.update_rest_status_cache({"cfgChargeAmpMax": 32})
+
+        assert mock_device.last_rest_status == {"sysUserMaxChargeAmpSet": 10, "cfgChargeAmpMax": 32}
+
+    @pytest.mark.asyncio
     async def test_stop_charging(self, mock_device, graphql_command_success_response):
         """Stop charging sends userForceStop then stopChargeNow, as the app does."""
         mock_device.graphql_client.execute_mutation = AsyncMock(return_value=graphql_command_success_response)

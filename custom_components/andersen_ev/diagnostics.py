@@ -36,6 +36,8 @@ def _device_diagnostics(device: KonnectDevice) -> dict[str, Any]:
         "status_available": device.status_available,
         "model_name": device.model_name,
         "last_status": device.last_status,
+        # Only the REST status; its device and info objects hold account emails.
+        "last_rest_status": device.last_rest_status,
     }
     return async_redact_data(data, TO_REDACT)
 

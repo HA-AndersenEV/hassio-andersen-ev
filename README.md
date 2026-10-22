@@ -21,6 +21,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
   * **Grid source power** number (kW).
   * **Charge outside schedule** switch.
   * **Boost** switch.
+* **User max power** (kW) number to limit the charge rate, plus **user max current** (A), disabled by default.
 * **Max system charge current** diagnostic sensor (the charger's configured maximum current, in A).
 * Provides services to:
   * Disable all charging schedules: `andersen_ev.disable_all_schedules`
@@ -118,6 +119,8 @@ service calls. In short:
   independently.
 * **Solar charging** switches and a grid source power number, mirroring the app's Power source
   screen.
+* **User max power** and **user max current** numbers to limit the charge rate, mirroring the app's
+  power settings (`userAmpSet`).
 * **Sensors** for energy, cost, live grid/solar/charge power, voltage, temperature, fault code and
   connector state, sourced from the charger's historical and live status data.
 * **Services** to disable all schedules, reset an RCM fault, and pull a one-off detailed device
@@ -127,14 +130,17 @@ service calls. In short:
 
 This is a cloud-only integration (`iot_class: cloud_polling`) - there is no local/LAN control of
 the chargepoint. All communication goes through Andersen's Konnect+ cloud (AWS Cognito
-authentication + a GraphQL API), so an internet connection and Andersen's cloud being up are both
-required for entities to update or for services/lock actions to work.
+authentication, a GraphQL API and a REST API), so an internet connection and Andersen's cloud
+being up are both required for entities to update or for services/lock actions to work.
 
-A `DataUpdateCoordinator` polls the API every 60 seconds for all devices on the account. After a
+A `DataUpdateCoordinator` polls the API every 60 seconds for all devices on the account. Each poll
+also calls the REST `getDevice` endpoint, which reports some settings the GraphQL API doesn't, such
+as the user max charge current. If only that call fails, the charger stays available and the
+user max current and power numbers keep their last value. After a
 lock/unlock, schedule change, or RCM reset, the integration waits briefly before requesting a
 refresh, since the API needs a moment to apply the change before it's reflected in the polled
-status. The charger itself only reports in about every 90 seconds, so a change is often not visible
-until a later poll.
+status. The charger can show some delay in updating a value; if it takes longer than the brief pause to udate
+then the UI may display a stale value until the next poll occurs.
 
 ### Lock states and pending commands
 
@@ -186,6 +192,35 @@ chargers.
 enough solar to charge, pressing Stop charging has no effect and the charger keeps charging. Turn
 Charge outside schedule off first, then press Stop charging.
 
+### Max charge rate
+
+These entities mirror the max power setting in the Konnect+ app, so you can lower the charge rate
+from an automation, for example while other large loads are running:
+
+| Entity | Type | What it does |
+|---|---|---|
+| User max power | Number (kW) | The highest power the charger will charge at, as shown in the app. |
+| User max current | Number (A) | The same setting in amps, converted at 0.225 kW per amp. Disabled by default. |
+
+Both entities control the same charger setting (`sysUserMaxChargeAmpSet`), so changing one updates
+the other. User max current is disabled by default because it duplicates user max power. To use
+it, enable it from the charger's device page. [Grid source power](#solar-charging-controls) is also worked out from this setting, so
+its kW value changes when you change the max charge rate.
+
+**Only four values are allowed.** Like the app, the charger only accepts **10, 16, 24 or 32 A**
+(2.3, 3.6, 5.4 or 7.2 kW). It silently ignores anything else, so the integration rounds what you set
+to the nearest allowed value. When a value is exactly halfway between two, it rounds down. For
+example 20 A becomes 16 A and 5.0 kW becomes 24 A (5.4 kW).
+
+**The installer limit still applies.** The value never goes above the charger's installed maximum
+(max system charge current, `cfgChargeAmpMax`). On a charger installed at 20 A, the highest
+setting is 16 A. Setting a value fails with an error if the installed maximum isn't known yet or is
+below 10 A.
+
+If no user max has been set, both entities show the installed maximum, as the app does. A change
+usually reaches the charger within a minute, but the value shown may revert briefly until the
+charger reports the new setting.
+
 ### Solar charging controls
 
 These entities mirror the **Power source** screen in the Konnect+ app:
@@ -196,13 +231,18 @@ These entities mirror the **Power source** screen in the Konnect+ app:
 | Grid source power | Number (kW) | The minimum charge rate during schedule times, made up from grid power when there isn't enough solar. For example, 3.6 kW with 2 kW of solar charges at 2 kW solar plus 1.6 kW grid. |
 | Charge outside schedule | Switch | Allows solar charging outside your charging schedules. |
 | Boost | Switch | Ignores the solar settings and charges at the maximum rate. Andersen limits a boost to about 2 hours, after which the solar settings resume. |
-| Max system charge current | Sensor (A) | The charger's configured maximum current (`cfgChargeAmpMax`). Grid source power is calculated from it. |
+| Max system charge current | Sensor (A) | The charger's configured maximum current (`cfgChargeAmpMax`). Grid source power is calculated from it if no user max is set. |
 
 **Grid source power and the API.** Andersen's API stores grid source power as a percentage of the
 charger's maximum power, not in kW. The integration converts between the two:
 
-* Maximum power is max system charge current × 0.225, rounded to the nearest 0.1 kW. For a 32 A
-  charger this is 7.2 kW, which is also the highest grid source power you can set.
+* Maximum power is the [user max current](#max-charge-rate) × 0.225, rounded to the nearest
+  0.1 kW, as the app does. If no user max is set, or the integration couldn't read it, max system
+  charge current is used instead. For a 32 A charger with no user max this is 7.2 kW, which is also
+  the highest grid source power you can set.
+* Lowering the user max lowers the maximum, so the same percentage gives a lower kW value. For
+  example, with a 16 A user max the maximum is 3.6 kW and 50% is 1.8 kW. The kW value shown for
+  grid source power changes when the user max changes, even though the charger's setting doesn't.
 * The kW value you set is converted to a whole percentage of that maximum, so the value read back
   can differ slightly from what you entered.
 
@@ -238,12 +278,6 @@ only marked unavailable once polling has failed for a device with no prior cache
 * **Grid power sensors are a workaround, not a replacement for a smart meter integration.** They're
   intended for those without a smart meter connected to Home Assistant already (see
   [Features](#features)) - accuracy depends entirely on what the charger itself reports.
-* **Grid source power uses the charger's configured maximum current, not your own limit.**
-  The integration calculates maximum power from max system charge current (`cfgChargeAmpMax`).
-  The app uses the maximum you've set yourself in the app's power settings
-  (`sysUserMaxChargeAmpSet`) if there is one. If you've lowered that limit, Home Assistant shows a higher
-  kW value than the app for the same setting, and a kW value set in Home Assistant gives a lower
-  charge rate than the same value set in the app.
 * **Fault codes are raw values.** The fault code sensor exposes whatever numeric/string code the
   charger reports, with no built-in lookup table translating codes to human-readable descriptions.
 

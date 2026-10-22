@@ -188,6 +188,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         self.client = client
         self.devices: list[KonnectDevice] = []
         self._device_availability: dict[str, bool] = {}
+        self._rest_failing: set[str] = set()
 
     async def async_request_refresh(self) -> None:
         """Request a data refresh after a short delay.
@@ -195,7 +196,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         The Andersen API needs a moment to apply changes before the
         updated state is available, so we wait briefly before fetching.
         """
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(3)
         await super().async_request_refresh()
 
     async def _async_update_data(self) -> list[KonnectDevice]:
@@ -269,12 +270,29 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 _LOGGER.info("Device %s is back online", device.friendly_name)
             self._device_availability[device.device_id] = True
 
+            await self._update_user_device(device)
+
             try:
                 await device.get_last_charge()
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Failed to fetch last charge for %s: %s", device.friendly_name, err)
 
         return self.devices
+
+    async def _update_user_device(self, device: KonnectDevice) -> None:
+        """Refresh the device's REST data, keeping the cached copy if the call fails."""
+        try:
+            await device.get_user_device()
+        except AndersenError as err:
+            if device.device_id in self._rest_failing:
+                _LOGGER.debug("REST device data for %s still unavailable: %s", device.friendly_name, err)
+            else:
+                _LOGGER.warning("Failed to fetch REST device data for %s: %s", device.friendly_name, err)
+                self._rest_failing.add(device.device_id)
+            return
+        if device.device_id in self._rest_failing:
+            _LOGGER.info("REST device data for %s is available again", device.friendly_name)
+            self._rest_failing.discard(device.device_id)
 
     def _mark_device_unavailable(self, device, error) -> None:
         """Mark a device unavailable and log once per transition."""
