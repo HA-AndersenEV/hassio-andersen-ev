@@ -677,7 +677,6 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
             if device.device_id == self._device.device_id:
                 self._device = device
                 if self._device.last_status and self._data_key in self._device.last_status:
-                    _LOGGER.debug("Live available for %s is %s", self._data_key, self.coordinator.last_update_success)
                     return self.coordinator.last_update_success and self._device.status_available
         return False
 
@@ -693,7 +692,6 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
         # Check if the device has charge status information
         if self._device.last_status and self._data_key in self._device.last_status:
             value = self._device.last_status[self._data_key]
-            _LOGGER.debug("Live value for %s is %s", self._data_key, value)
             if (
                 hasattr(self, "_attr_device_class")
                 and self._attr_device_class == SensorDeviceClass.TIMESTAMP
