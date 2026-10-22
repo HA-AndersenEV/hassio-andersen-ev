@@ -1,10 +1,13 @@
 """Tests for KonnectClient Cognito auth and device-key-aware token refresh."""
 # pylint: disable=protected-access
 
+import logging
 import time
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import requests
 from botocore.exceptions import ClientError
 
 from andersen_ev.konnect.client import KonnectClient
@@ -482,6 +485,160 @@ class TestGetDevices:
             mock_requests.get.return_value = error_response
             with pytest.raises(AndersenConnectionError):
                 await client.getDevices()
+
+
+@pytest.fixture
+def rest_client() -> Iterator[tuple[KonnectClient, AsyncMock, AsyncMock]]:
+    """Yield an authenticated client with its ensure_valid_auth and refresh_token mocked."""
+    client = KonnectClient("user@example.com", "password")
+    client.token = "abc"
+    with (
+        patch.object(client, "ensure_valid_auth", AsyncMock()) as ensure_valid_auth,
+        patch.object(client, "refresh_token", AsyncMock()) as refresh_token,
+    ):
+        yield client, ensure_valid_auth, refresh_token
+
+
+def _json_response(status_code: int, body: object) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status_code
+    response.text = str(body)
+    response.json.return_value = body
+    return response
+
+
+class TestGetDevice:
+    """Tests for getDevice(), the REST call on the mobile-staging host."""
+
+    @pytest.mark.asyncio
+    async def test_get_device_success(self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock]) -> None:
+        """getDevice() calls the staging host and returns the userDevice object."""
+        client, ensure_valid_auth, _ = rest_client
+        user_device = {"device": {"id": 1}, "info": {}, "status": {"sysUserMaxChargeAmpSet": 16}}
+
+        with patch("andersen_ev.konnect.client.requests") as mock_requests:
+            mock_requests.get.return_value = _json_response(200, {"userDevice": user_device})
+            result = await client.getDevice("dev1")
+
+        assert result == user_device
+        mock_requests.get.assert_called_once_with(
+            "https://mobile-staging.andersen-ev.com/api/getDevice",
+            params={"deviceId": "dev1"},
+            headers={"Authorization": "Bearer abc"},
+            timeout=30,
+        )
+        ensure_valid_auth.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_get_device_logs_request_and_redacted_response(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The REST call and response are logged at debug, without account emails."""
+        client, _, _ = rest_client
+        body = {
+            "userDevice": {
+                "device": {
+                    "customer_id": "owner@example.com",
+                    "shared_customers": [{"customerId": "owner@example.com", "email": "owner@example.com"}],
+                },
+                "status": {"sysUserMaxChargeAmpSet": 16},
+            }
+        }
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="andersen_ev.konnect.client"),
+            patch("andersen_ev.konnect.client.requests") as mock_requests,
+        ):
+            mock_requests.get.return_value = _json_response(200, body)
+            await client.getDevice("dev1")
+
+        assert "Calling REST GET https://mobile-staging.andersen-ev.com/api/getDevice?deviceId=dev1" in caplog.text
+        assert "REST getDevice response for device dev1" in caplog.text
+        assert "'sysUserMaxChargeAmpSet': 16" in caplog.text
+        assert "owner@example.com" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_get_device_retries_once_after_401(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock]
+    ) -> None:
+        """getDevice() refreshes the token and retries once on a 401."""
+        client, _, refresh_token = rest_client
+
+        with patch("andersen_ev.konnect.client.requests") as mock_requests:
+            mock_requests.get.side_effect = [
+                _json_response(401, "Unauthorized"),
+                _json_response(200, {"userDevice": {"status": {}}}),
+            ]
+            result = await client.getDevice("dev1")
+
+        assert result == {"status": {}}
+        refresh_token.assert_awaited_once()
+        assert mock_requests.get.call_count == 2
+
+    @pytest.mark.parametrize(
+        "status_code",
+        [pytest.param(500, id="server_error"), pytest.param(401, id="still_unauthorized_after_refresh")],
+    )
+    @pytest.mark.asyncio
+    async def test_get_device_bad_status_raises_connection_error(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock], status_code: int
+    ) -> None:
+        """getDevice() raises AndersenConnectionError when the call doesn't succeed."""
+        client, _, _ = rest_client
+
+        with patch("andersen_ev.konnect.client.requests") as mock_requests:
+            mock_requests.get.return_value = _json_response(status_code, "error")
+            with pytest.raises(AndersenConnectionError):
+                await client.getDevice("dev1")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"data": {"userDevice": {"status": {}}}}, id="nested_under_data"),
+            pytest.param({"userDevice": {"info": {}}}, id="no_status"),
+            pytest.param({"userDevice": {"status": None}}, id="null_status"),
+            pytest.param(["not", "a", "dict"], id="not_an_object"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_get_device_unexpected_shape_raises_api_error(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock], body: object
+    ) -> None:
+        """getDevice() raises AndersenApiError when there's no userDevice.status object."""
+        client, _, _ = rest_client
+
+        with patch("andersen_ev.konnect.client.requests") as mock_requests:
+            mock_requests.get.return_value = _json_response(200, body)
+            with pytest.raises(AndersenApiError):
+                await client.getDevice("dev1")
+
+    @pytest.mark.asyncio
+    async def test_get_device_non_json_body_raises_api_error(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock]
+    ) -> None:
+        """getDevice() raises AndersenApiError when the body isn't JSON."""
+        client, _, _ = rest_client
+        response = _json_response(200, None)
+        response.json.side_effect = ValueError("not json")
+
+        with patch("andersen_ev.konnect.client.requests") as mock_requests:
+            mock_requests.get.return_value = response
+            with pytest.raises(AndersenApiError):
+                await client.getDevice("dev1")
+
+    @pytest.mark.asyncio
+    async def test_get_device_request_exception_raises_connection_error(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock]
+    ) -> None:
+        """A network failure is raised as AndersenConnectionError so the coordinator handles it."""
+        client, _, _ = rest_client
+
+        with patch(
+            "andersen_ev.konnect.client.requests.get",
+            side_effect=requests.ConnectionError("unreachable"),
+        ):
+            with pytest.raises(AndersenConnectionError):
+                await client.getDevice("dev1")
 
 
 # ---------------------------------------------------------------------------

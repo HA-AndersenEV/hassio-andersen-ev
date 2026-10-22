@@ -1,5 +1,6 @@
 """Tests for the Andersen EV integration setup, coordinator, and services."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,6 +34,7 @@ def _make_coordinator(client=None, hass=None):
     coordinator.client = client or MagicMock()
     coordinator.devices = []
     coordinator._device_availability = {}
+    coordinator._rest_failing = set()
     coordinator.hass = hass if hass is not None else MagicMock()
     return coordinator
 
@@ -46,6 +48,7 @@ def _make_device(device_id="device_1", friendly_name="Device", user_lock=False):
     device.status_available = None
     device.get_detailed_device_status = AsyncMock(return_value={"online": True})
     device.get_last_charge = AsyncMock(return_value={"chargeEnergyTotal": 1.0})
+    device.get_user_device = AsyncMock(return_value={"status": {"sysUserMaxChargeAmpSet": 16}})
     device.get_solar = AsyncMock()
     device.disable_all_schedules = AsyncMock()
     device.reset_rcm = AsyncMock()
@@ -109,6 +112,7 @@ class TestAsyncUpdateData:
         device.update_solar_status_from_device_status.assert_called_once_with({"online": True})
         device.get_solar.assert_not_awaited()
         device.get_last_charge.assert_awaited_once()
+        device.get_user_device.assert_awaited_once()
         assert device.status_available is True
         assert coordinator._device_availability[device.device_id] is True
 
@@ -286,6 +290,39 @@ class TestAsyncUpdateData:
         assert coordinator._device_availability[device.device_id] is True
 
     @pytest.mark.asyncio
+    async def test_rest_failure_keeps_device_available_and_warns_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A failed REST getDevice leaves the device available and only warns on the first failure."""
+        device = _make_device()
+        device.get_user_device = AsyncMock(side_effect=AndersenError("rest down"))
+        client = MagicMock()
+        client.getDevices = AsyncMock(return_value=[device])
+        coordinator = _make_coordinator(client)
+
+        await coordinator._async_update_data()
+        await coordinator._async_update_data()
+
+        assert device.status_available is True
+        device.get_last_charge.assert_awaited()
+        warnings = [r for r in caplog.records if "Failed to fetch REST device data" in r.getMessage()]
+        assert len(warnings) == 1
+        assert device.device_id in coordinator._rest_failing
+
+    @pytest.mark.asyncio
+    async def test_rest_recovery_clears_failure(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A successful REST getDevice after a failure is logged, and warns again on the next failure."""
+        device = _make_device()
+        client = MagicMock()
+        client.getDevices = AsyncMock(return_value=[device])
+        coordinator = _make_coordinator(client)
+        coordinator._rest_failing.add(device.device_id)
+
+        with caplog.at_level(logging.INFO):
+            await coordinator._async_update_data()
+
+        assert device.device_id not in coordinator._rest_failing
+        assert "REST device data for Device is available again" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_device_recovery_logs_info(self):
         device = _make_device()
         client = MagicMock()
@@ -341,7 +378,7 @@ class TestAsyncRequestRefresh:
         ):
             await coordinator.async_request_refresh()
 
-        mock_sleep.assert_awaited_once_with(1.5)
+        mock_sleep.assert_awaited_once_with(3)
         mock_parent_refresh.assert_awaited_once()
 
 

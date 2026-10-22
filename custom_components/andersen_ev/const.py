@@ -9,6 +9,11 @@ CONF_PASSWORD = "password"
 # Defaults
 DEFAULT_SCAN_INTERVAL = 60  # seconds
 
+# Converts charge current to power, as the Konnect+ app does (32 A gives 7.2 kW).
+KW_PER_AMP = 0.225
+# The only user max charge currents the charger applies; it silently ignores anything else.
+ALLOWED_USER_MAX_AMPS = (10, 16, 24, 32)
+
 # Services
 SERVICE_DISABLE_ALL_SCHEDULES = "disable_all_schedules"
 SERVICE_GET_DEVICE_INFO = "get_device_info"

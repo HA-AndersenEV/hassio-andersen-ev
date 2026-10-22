@@ -31,6 +31,10 @@
     },
     "switch": {
       "schedule": { "default": "mdi:calendar-clock" }
+    },
+    "number": {
+      "user_max_current": { "default": "mdi:current-ac" },
+      "user_max_power": { "default": "mdi:speedometer" }
     }
   }
 }

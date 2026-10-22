@@ -8,9 +8,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 
 from andersen_ev.grid_source import (
+    amps_to_kw,
+    effective_max_amps,
     grid_source_kw_to_percent,
     grid_source_percent_to_kw,
-    max_grid_source_power_kw,
 )
 from andersen_ev.konnect.exceptions import AndersenAuthError
 from andersen_ev.number import AndersenEvGridSourcePowerNumber, async_setup_entry
@@ -51,6 +52,7 @@ def mock_device():
         "sysHwVersion": "1.0",
         "cfgChargeAmpMax": 32,
     }
+    device.last_rest_status = {}
     device._last_solar_status = {
         "boost": False,
         "solarChargeAlways": False,
@@ -156,6 +158,19 @@ class TestAndersenEvSolarChargeAlwaysSwitch:
         assert mock_device._last_solar_status["solarMaxGridChargePercent"] == expected_percent
 
     @pytest.mark.asyncio
+    async def test_turn_on_minimum_follows_user_max(self, mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
+        """The 1.4 kW minimum is a percent of the user max power (3.6 kW at 16 A)."""
+        mock_coordinator.data = [mock_device]
+        mock_device.last_rest_status = {"sysUserMaxChargeAmpSet": 16}
+
+        switch = AndersenEvSolarChargeAlwaysSwitch(mock_coordinator, mock_device)
+        switch.hass = mock_coordinator.hass
+        with patch.object(switch, "async_write_ha_state"):
+            await switch.async_turn_on()
+
+        mock_device.set_solar.assert_called_once_with(charge_always=True, max_grid_charge_percent=39)
+
+    @pytest.mark.asyncio
     async def test_turn_off_zeroes_percent(self, mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
         """Turning off sends chargeAlways off with a zero percent."""
         mock_coordinator.data = [mock_device]
@@ -248,11 +263,31 @@ class TestAndersenEvSolarChargeOutsideScheduleSwitch:
 
 @pytest.mark.parametrize(
     ("max_amps", "expected_kw"),
-    [(32, 7.2), (16, 3.6), (30, 6.8), (6, 1.4)],
+    [(32, 7.2), (24, 5.4), (16, 3.6), (10, 2.3), (30, 6.8), (6, 1.4)],
 )
-def test_max_grid_source_power_kw(max_amps: float, expected_kw: float) -> None:
-    """Max power is max amps * 0.225, rounded to the nearest 0.1 kW."""
-    assert max_grid_source_power_kw(max_amps) == expected_kw
+def test_amps_to_kw(max_amps: float, expected_kw: float) -> None:
+    """kW is amps * 0.225 rounded half up to 0.1 kW, so 10 A matches the app's 2.3 kW."""
+    assert amps_to_kw(max_amps) == expected_kw
+
+
+@pytest.mark.parametrize(
+    ("rest_status", "last_status", "expected"),
+    [
+        pytest.param({"sysUserMaxChargeAmpSet": 16}, {"cfgChargeAmpMax": 32}, 16, id="user_max"),
+        pytest.param({"sysUserMaxChargeAmpSet": None}, {"cfgChargeAmpMax": 32}, 32, id="null_user_max"),
+        pytest.param({"sysUserMaxChargeAmpSet": 0}, {"cfgChargeAmpMax": 32}, 32, id="zero_user_max"),
+        pytest.param({}, {"cfgChargeAmpMax": 32}, 32, id="no_rest_data"),
+        pytest.param({}, {}, None, id="neither_known"),
+    ],
+)
+def test_effective_max_amps(
+    mock_device: MagicMock, rest_status: dict, last_status: dict, expected: float | None
+) -> None:
+    """Grid source power uses the user max, falling back to the installer limit."""
+    mock_device.last_rest_status = rest_status
+    mock_device.last_status = last_status
+
+    assert effective_max_amps(mock_device) == expected
 
 
 @pytest.mark.parametrize(
@@ -363,6 +398,23 @@ class TestAndersenEvGridSourcePowerNumber:
         assert number.native_step == 0.1
 
     @pytest.mark.asyncio
+    async def test_follows_user_max(self, mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
+        """With a 16 A user max, percentages are of 3.6 kW rather than the installer's 7.2 kW."""
+        mock_coordinator.data = [mock_device]
+        mock_device.last_rest_status = {"sysUserMaxChargeAmpSet": 16}
+        mock_device._last_solar_status["solarMaxGridChargePercent"] = 50
+
+        number = AndersenEvGridSourcePowerNumber(mock_coordinator, mock_device)
+        number.hass = mock_coordinator.hass
+        assert number.native_max_value == 3.6
+        assert number.native_value == 1.8
+
+        with patch.object(number, "async_write_ha_state"):
+            await number.async_set_native_value(2.7)
+
+        mock_device.set_solar.assert_called_once_with(charge_always=True, max_grid_charge_percent=75)
+
+    @pytest.mark.asyncio
     async def test_unique_id_and_unit(self, mock_coordinator, mock_device):
         """Test unique ID and unit."""
         number = AndersenEvGridSourcePowerNumber(mock_coordinator, mock_device)
@@ -453,7 +505,7 @@ async def test_solar_entity_write_failure_raises(
 
 @pytest.mark.asyncio
 async def test_number_setup_adds_entities_for_new_devices(mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
-    """Chargers discovered after setup get a grid source power entity without a reload."""
+    """Chargers discovered after setup get their number entities without a reload."""
     mock_coordinator.data = []
     entry = MagicMock()
     entry.runtime_data = mock_coordinator
@@ -469,4 +521,8 @@ async def test_number_setup_adds_entities_for_new_devices(mock_coordinator: Magi
 
     assert async_add_entities.call_count == 2
     (added,) = async_add_entities.call_args.args
-    assert [entity.unique_id for entity in added] == ["test_device_123_grid_source_power"]
+    assert [entity.unique_id for entity in added] == [
+        "test_device_123_grid_source_power",
+        "test_device_123_user_max_current",
+        "test_device_123_user_max_power",
+    ]

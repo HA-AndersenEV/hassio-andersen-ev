@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from andersen_ev.diagnostics import async_get_config_entry_diagnostics
+from andersen_ev.konnect.device import KonnectDevice
 
 
 def _make_entry(devices):
@@ -57,6 +58,22 @@ class TestAsyncGetConfigEntryDiagnostics:
         assert device_diag["model_name"] == "Andersen A2"
         assert device_diag["last_status"] == {"online": True}
         assert result["client"]["tokenType"] == "Bearer"
+
+    @pytest.mark.asyncio
+    async def test_only_rest_status_is_included(self, mock_device: KonnectDevice) -> None:
+        """The REST device and info objects hold account emails, so only the status is included."""
+        mock_device._last_user_device = {
+            "device": {"customer_id": "owner@example.com"},
+            "info": {"ChargeOutsideSchedules": True},
+            "status": {"sysUserMaxChargeAmpSet": 16},
+        }
+        entry = _make_entry([mock_device])
+
+        result = await async_get_config_entry_diagnostics(MagicMock(), entry)
+
+        device_diag = result["devices"][0]
+        assert device_diag["last_rest_status"] == {"sysUserMaxChargeAmpSet": 16}
+        assert "owner@example.com" not in str(result)
 
     @pytest.mark.asyncio
     async def test_no_devices_returns_empty_list_and_no_client_block(self):

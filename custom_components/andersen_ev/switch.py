@@ -19,7 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
 from .entity import AndersenEvDeviceInfoMixin
-from .grid_source import device_max_amps, grid_supplement_on_percent
+from .grid_source import effective_max_amps, grid_supplement_on_percent
 from .konnect import const
 from .konnect.exceptions import AndersenError
 
@@ -438,7 +438,7 @@ class AndersenEvSolarChargeAlwaysSwitch(AndersenEvSolarSwitch, RestoreEntity):
         """Pair chargeAlways with a percent, as the API ignores it otherwise."""
         if not value:
             return {"solarChargeAlways": False, "solarMaxGridChargePercent": 0}
-        if (max_amps := device_max_amps(self._device)) is None:
+        if (max_amps := effective_max_amps(self._device)) is None:
             _LOGGER.warning(
                 "Cannot turn on grid supplement for %s: max charge current is unknown",
                 self._device.friendly_name,

@@ -75,7 +75,9 @@
       "lock": { "name": "Lock" }
     },
     "number": {
-      "grid_source_power": { "name": "Grid source power" }
+      "grid_source_power": { "name": "Grid source power" },
+      "user_max_current": { "name": "User max current" },
+      "user_max_power": { "name": "User max power" }
     }
   },
   "exceptions": {
@@ -91,7 +93,11 @@
     "schedule_index_out_of_range": { "message": "Schedule index {index} is out of range for {device_name}" },
     "schedule_update_error": { "message": "Failed to update schedule for {device_name}: {error}" },
     "solar_update_failed": { "message": "Failed to update {setting} for {device_name}" },
-    "solar_update_error": { "message": "Failed to update {setting} for {device_name}: {error}" }
+    "solar_update_error": { "message": "Failed to update {setting} for {device_name}: {error}" },
+    "user_max_current_limit_unknown": { "message": "Cannot set the max charge rate for {device_name} because its installer current limit isn't known yet" },
+    "user_max_current_limit_too_low": { "message": "Cannot set the max charge rate for {device_name} because its installer current limit of {max_amps} A is below the lowest setting of {min_amps} A" },
+    "user_max_current_failed": { "message": "Failed to set the max charge rate for {device_name}" },
+    "user_max_current_error": { "message": "Failed to set the max charge rate for {device_name}: {error}" }
   },
   "issues": {
     "api_shape_changed": {

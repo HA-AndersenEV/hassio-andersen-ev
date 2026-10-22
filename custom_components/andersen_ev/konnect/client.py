@@ -19,6 +19,18 @@ CLIENT_ID = "23s0olnnniu5472ons0d9uoqt9"
 
 _LOGGER = logging.getLogger(__name__)
 
+# REST response keys holding account emails, kept out of debug logs.
+_REDACT_KEYS = {"customer_id", "customerId", "email"}
+
+
+def _redact(data: object) -> object:
+    """Return a copy of a REST response with account emails replaced."""
+    if isinstance(data, dict):
+        return {key: "**REDACTED**" if key in _REDACT_KEYS else _redact(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [_redact(item) for item in data]
+    return data
+
 
 class KonnectClient:
     """Authenticate with AWS Cognito and access the Konnect API."""
@@ -186,6 +198,7 @@ class KonnectClient:
         devices = []
 
         url = const.API_DEVICES_URL
+        _LOGGER.debug("Calling REST GET %s", url)
 
         # Run blocking requests call in an executor to avoid blocking the event loop
         response = await asyncio.get_event_loop().run_in_executor(
@@ -200,12 +213,12 @@ class KonnectClient:
         if response.status_code != 200:
             if response.status_code == 401:
                 # Token expired during request, refresh and retry
-                _LOGGER.debug("Token expired during getDevices request, refreshing")
+                _LOGGER.debug("Token expired during REST getDevices request, refreshing")
                 await self.refresh_token()
                 return await self.getDevices()
 
             _LOGGER.error(
-                "Failed to get devices. Status Code: %s, Response: %s",
+                "REST getDevices failed. Status Code: %s, Response: %s",
                 response.status_code,
                 response.text,
             )
@@ -221,10 +234,10 @@ class KonnectClient:
             return devices
 
         # Debug log number of devices found
-        _LOGGER.debug("Found %s devices", len(response_body["devices"]))
+        _LOGGER.debug("REST getDevices returned %s devices", len(response_body["devices"]))
 
         for device in response_body["devices"]:
-            _LOGGER.debug("device details: %s", device)
+            _LOGGER.debug("REST getDevices device details: %s", _redact(device))
             # Use "Andersen" as default friendly name if not set or empty
             friendly_name = device.get("friendlyName") or "Andersen"
             devices.append(
@@ -237,6 +250,49 @@ class KonnectClient:
             )
 
         return devices
+
+    async def getDevice(self, device_id: str) -> dict:
+        """Get a device's REST userDevice object (device, info and status)."""
+        await self.ensure_valid_auth()
+        response = await self.__get_device_response(device_id)
+        if response.status_code == 401:
+            _LOGGER.debug("Token expired during REST getDevice request, refreshing")
+            await self.refresh_token()
+            response = await self.__get_device_response(device_id)
+
+        if response.status_code != 200:
+            _LOGGER.error(
+                "REST getDevice failed for device %s. Status Code: %s, Response: %s",
+                device_id,
+                response.status_code,
+                response.text,
+            )
+            raise AndersenConnectionError(f"API returned status {response.status_code}")
+
+        try:
+            body = response.json()
+        except ValueError as err:
+            raise AndersenApiError("Unexpected API response: getDevice body is not JSON") from err
+        _LOGGER.debug("REST getDevice response for device %s: %s", device_id, _redact(body))
+        user_device = body.get("userDevice") if isinstance(body, dict) else None
+        if not isinstance(user_device, dict) or not isinstance(user_device.get("status"), dict):
+            raise AndersenApiError("Unexpected API response shape: missing 'userDevice.status'")
+        return user_device
+
+    async def __get_device_response(self, device_id: str) -> requests.Response:
+        _LOGGER.debug("Calling REST GET %s?deviceId=%s", const.API_DEVICE_URL, device_id)
+        try:
+            return await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: requests.get(
+                    const.API_DEVICE_URL,
+                    params={"deviceId": device_id},
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=30,
+                ),
+            )
+        except requests.RequestException as err:
+            raise AndersenConnectionError(f"getDevice request failed: {err}") from err
 
     async def __fetchUsername(self):
         url = const.GRAPHQL_USER_MAP_URL

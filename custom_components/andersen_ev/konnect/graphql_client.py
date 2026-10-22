@@ -263,7 +263,7 @@ class GraphQLClient:
         if result is None:
             return False
 
-        _LOGGER.debug("setSolar response: %s", result)
+        _LOGGER.debug("GraphQL setSolar response: %s", result)
         return True
 
     @staticmethod
