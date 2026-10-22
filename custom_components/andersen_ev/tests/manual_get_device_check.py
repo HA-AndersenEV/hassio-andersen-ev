@@ -44,6 +44,18 @@ PROD_BASE_URL = "https://mobile.andersen-ev.com/api"
 STAGING_BASE_URL = "https://mobile-staging.andersen-ev.com/api"
 REQUEST_TIMEOUT_S = 30
 
+# (section, key) pairs under data.userDevice to log individually at the end.
+KEY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("info", "ChargeOutsideSchedules"),
+    ("status", "evseState"),
+    ("status", "sysUserMaxChargeAmpSet"),
+    ("status", "evseChargeAmpCurrentLimit"),
+    ("status", "cfgChargeAmpMaxDSO"),
+    ("status", "sysProductName"),
+    ("status", "cfgChargeAmpMin"),
+    ("status", "cfgChargeAmpMax"),
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
@@ -100,10 +112,11 @@ def fetch_device_ids(base_url: str, token: str) -> list[str]:
     return ids
 
 
-def fetch_device(base_url: str, token: str, device_id: str) -> bool:
+def fetch_device(base_url: str, token: str, device_id: str) -> tuple[bool, dict | None]:
     """Call getDevice for one device and dump the response.
 
-    Returns True if the call returned HTTP 200 with a JSON body.
+    Returns (ok, userDevice): ok is True if the call returned HTTP 200 with a
+    JSON body; userDevice is the parsed data.userDevice object if present.
     """
     url = f"{base_url}/getDevice"
     _LOGGER.info("GET %s?deviceId=%s", url, device_id)
@@ -111,20 +124,20 @@ def fetch_device(base_url: str, token: str, device_id: str) -> bool:
         response = _get(url, token, params={"deviceId": device_id})
     except requests.RequestException as err:
         _LOGGER.error("Request to %s failed: %s", url, err)
-        return False
+        return False, None
 
     body = _body(response)
     _pp(f"getDevice [{response.status_code}] {response.url}", body)
 
     if response.status_code != 200 or not isinstance(body, dict):
         _LOGGER.error("getDevice failed on %s (HTTP %s)", base_url, response.status_code)
-        return False
+        return False, None
 
     # The app reads data.userDevice; tolerate the key being at the top level too.
     user_device = (body.get("data") or body).get("userDevice")
     if not isinstance(user_device, dict):
         _LOGGER.warning("Response has no data.userDevice — see full body above")
-        return True
+        return True, None
 
     _LOGGER.info("userDevice keys: %s", sorted(user_device))
     for section in ("info", "status"):
@@ -132,7 +145,20 @@ def fetch_device(base_url: str, token: str, device_id: str) -> bool:
             _pp(f"userDevice.{section}", user_device[section])
         else:
             _LOGGER.warning("userDevice has no '%s' object", section)
-    return True
+    return True, user_device
+
+
+def log_key_fields(env_name: str, device_id: str, user_device: dict) -> None:
+    """Log each of KEY_FIELDS on its own line."""
+    _LOGGER.info("---- Key fields: %s device %s ----", env_name, device_id)
+    for section, key in KEY_FIELDS:
+        section_data = user_device.get(section)
+        if not isinstance(section_data, dict):
+            _LOGGER.warning("device.%s.%s = <no '%s' object>", section, key, section)
+        elif key not in section_data:
+            _LOGGER.warning("device.%s.%s = <missing>", section, key)
+        else:
+            _LOGGER.info("device.%s.%s = %r", section, key, section_data[key])
 
 
 async def run(
@@ -153,12 +179,16 @@ async def run(
 
     environments = [("prod", PROD_BASE_URL), ("staging", STAGING_BASE_URL)]
     results: dict[str, bool] = {}
+    devices: list[tuple[str, str, dict]] = []
 
     for env_name, base_url in environments:
         if env_name == "staging" and results.get("prod") and not also_staging:
             break
 
+        _LOGGER.info("------------------------")
         _LOGGER.info("---- Environment: %s (%s) ----", env_name, base_url)
+        _LOGGER.info("------------------------")
+
         try:
             device_ids = await asyncio.to_thread(fetch_device_ids, base_url, token)
         except requests.RequestException as err:
@@ -174,7 +204,10 @@ async def run(
 
         ok = True
         for device_id in device_ids:
-            ok &= await asyncio.to_thread(fetch_device, base_url, token, device_id)
+            device_ok, user_device = await asyncio.to_thread(fetch_device, base_url, token, device_id)
+            ok &= device_ok
+            if user_device is not None:
+                devices.append((env_name, device_id, user_device))
         results[env_name] = ok
 
         if out_file and ok:
@@ -186,6 +219,8 @@ async def run(
             _LOGGER.info("Saved raw getDevice response to %s", path)
 
     _pp("Summary", {env: "OK" if ok else "FAILED" for env, ok in results.items()})
+    for env_name, device_id, user_device in devices:
+        log_key_fields(env_name, device_id, user_device)
     return any(results.values())
 
 
