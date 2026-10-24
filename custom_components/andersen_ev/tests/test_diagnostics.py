@@ -48,7 +48,7 @@ class TestAsyncGetConfigEntryDiagnostics:
     @pytest.mark.asyncio
     async def test_non_sensitive_fields_pass_through_unredacted(self, mock_device):
         mock_device.model_name = "Andersen A2"
-        mock_device._last_status = {"online": True}
+        mock_device.apply_subscription_update({"online": True})
         entry = _make_entry([mock_device])
 
         result = await async_get_config_entry_diagnostics(MagicMock(), entry)
@@ -57,7 +57,8 @@ class TestAsyncGetConfigEntryDiagnostics:
         assert device_diag["device_id"] == "test_device_123"
         assert device_diag["friendly_name"] == "Test Device"
         assert device_diag["model_name"] == "Andersen A2"
-        assert device_diag["last_status"] == {"online": True}
+        assert device_diag["subscription"]["last_status"] == {"online": True}
+        assert "last_status" not in device_diag
         assert result["client"]["tokenType"] == "Bearer"
 
     @pytest.mark.asyncio
@@ -113,4 +114,20 @@ class TestAsyncGetConfigEntryDiagnostics:
             "disconnected_since": None,
             "last_update": "2026-10-24T12:00:00+00:00",
             "last_status": {"evseState": 3},
+        }
+
+    @pytest.mark.asyncio
+    async def test_device_identifiers_are_redacted(self, mock_device: KonnectDevice) -> None:
+        """The Wi-Fi network, charger serial and LoRa EUIs identify the user's home."""
+        mock_device.apply_subscription_update(
+            {"sysSSID": "HomeNetwork", "konnectSerial": "1234567890", "cfgLora0": {"eui": "00-11-22", "on": True}}
+        )
+        entry = _make_entry([mock_device])
+
+        result = await async_get_config_entry_diagnostics(MagicMock(), entry)
+
+        assert result["devices"][0]["subscription"]["last_status"] == {
+            "sysSSID": "**REDACTED**",
+            "konnectSerial": "**REDACTED**",
+            "cfgLora0": {"eui": "**REDACTED**", "on": True},
         }

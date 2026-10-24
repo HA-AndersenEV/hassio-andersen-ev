@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.const import Platform
 from homeassistant.core import SupportsResponse
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -14,6 +14,8 @@ from andersen_ev import (
     PLATFORMS,
     AndersenEvCoordinator,
     _make_stale_device_listener,
+    async_migrate_entry,
+    async_setup,
     async_setup_entry,
     async_unload_entry,
 )
@@ -40,6 +42,8 @@ def _make_coordinator(client=None, hass=None):
     coordinator._live_status_received = {}
     coordinator._live_timeout_unsubs = {}
     coordinator.hass = hass if hass is not None else MagicMock()
+    coordinator.config_entry = MagicMock()
+    setattr(coordinator, "async_start_subscriptions", MagicMock())
     return coordinator
 
 
@@ -73,30 +77,24 @@ def _make_entry(email="test@example.com", password="testpass"):
     return entry
 
 
-def _make_call(device_id="device_1"):
-    call = MagicMock()
-    call.data = {ATTR_DEVICE_ID: device_id}
-    return call
-
-
 async def _setup_and_get_handlers():
-    """Run async_setup_entry with a stubbed coordinator and return its registered service handlers."""
+    """Run async_setup and return its service handlers and the coordinator of a loaded entry."""
     hass = _make_hass()
-    entry = _make_entry()
-    mock_coordinator = MagicMock()
-    mock_coordinator.async_config_entry_first_refresh = AsyncMock()
-    mock_coordinator.async_wait_for_live_status = AsyncMock()
-    mock_coordinator.async_request_refresh = AsyncMock()
-    mock_coordinator.data = []
+    coordinator = MagicMock()
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.data = []
+    hass.config_entries.async_loaded_entries.return_value = [MagicMock(runtime_data=coordinator)]
 
-    with (
-        patch("andersen_ev.KonnectClient"),
-        patch("andersen_ev.AndersenEvCoordinator", return_value=mock_coordinator),
-    ):
-        await async_setup_entry(hass, entry)
+    await async_setup(hass, {})
 
+    hass.config_entries.async_loaded_entries.assert_not_called()
     handlers = {c.args[1]: c.args[2] for c in hass.services.async_register.call_args_list}
-    return handlers, mock_coordinator
+
+    def _call(service: str, device_id: str):
+        call = MagicMock(hass=hass, data={ATTR_DEVICE_ID: device_id})
+        return handlers[service](call)
+
+    return _call, coordinator
 
 
 class TestAsyncUpdateData:
@@ -112,6 +110,7 @@ class TestAsyncUpdateData:
         result = await coordinator._async_update_data()
 
         assert result == [device]
+        coordinator.async_start_subscriptions.assert_called_once_with()
         # Live status, including the solar cache, comes from the subscription.
         device.get_detailed_device_status.assert_not_awaited()
         device.update_solar_status_from_device_status.assert_not_called()
@@ -382,8 +381,8 @@ class TestAsyncSetupEntry:
         ):
             await async_setup_entry(hass, entry)
 
-        assert mock_coordinator.async_add_listener.call_count == 2
-        assert entry.async_on_unload.call_count == 2
+        mock_coordinator.async_add_listener.assert_called_once()
+        entry.async_on_unload.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_waits_for_live_status_before_creating_entities(self):
@@ -393,6 +392,7 @@ class TestAsyncSetupEntry:
         mock_coordinator.async_config_entry_first_refresh = AsyncMock()
         order = MagicMock()
         mock_coordinator.async_wait_for_live_status = AsyncMock(side_effect=lambda _timeout: order("wait"))
+        mock_coordinator.async_update_device_registry.side_effect = lambda: order("registry")
         hass.config_entries.async_forward_entry_setups = AsyncMock(side_effect=lambda *_args: order("platforms"))
 
         with (
@@ -402,48 +402,7 @@ class TestAsyncSetupEntry:
             await async_setup_entry(hass, entry)
 
         mock_coordinator.async_wait_for_live_status.assert_awaited_once_with(LIVE_STATUS_SETUP_TIMEOUT)
-        assert [c.args[0] for c in order.call_args_list] == ["wait", "platforms"]
-
-    @pytest.mark.asyncio
-    async def test_removes_retired_grid_power_entity(self):
-        hass = _make_hass()
-        entry = _make_entry()
-        mock_coordinator = MagicMock()
-        mock_coordinator.async_config_entry_first_refresh = AsyncMock()
-        mock_coordinator.async_wait_for_live_status = AsyncMock()
-        mock_coordinator.devices = [_make_device("device_1"), _make_device("device_2")]
-        registry = MagicMock()
-        registry.async_get_entity_id.side_effect = lambda _domain, _platform, unique_id: (
-            "sensor.device_grid_power" if unique_id == "device_1_grid_power" else None
-        )
-
-        with (
-            patch("andersen_ev.KonnectClient"),
-            patch("andersen_ev.AndersenEvCoordinator", return_value=mock_coordinator),
-            patch("andersen_ev.er.async_get", return_value=registry),
-        ):
-            await async_setup_entry(hass, entry)
-
-        registry.async_get_entity_id.assert_any_call("sensor", DOMAIN, "device_2_grid_power")
-        registry.async_remove.assert_called_once_with("sensor.device_grid_power")
-
-    @pytest.mark.asyncio
-    async def test_starts_subscriptions_and_follows_device_changes(self):
-        hass = _make_hass()
-        entry = _make_entry()
-        mock_coordinator = MagicMock()
-        mock_coordinator.async_config_entry_first_refresh = AsyncMock()
-        mock_coordinator.async_wait_for_live_status = AsyncMock()
-        mock_coordinator.data = []
-
-        with (
-            patch("andersen_ev.KonnectClient"),
-            patch("andersen_ev.AndersenEvCoordinator", return_value=mock_coordinator),
-        ):
-            await async_setup_entry(hass, entry)
-
-        mock_coordinator.async_start_subscriptions.assert_called_once_with()
-        mock_coordinator.async_add_listener.assert_any_call(mock_coordinator.async_start_subscriptions)
+        assert [c.args[0] for c in order.call_args_list] == ["wait", "platforms", "registry"]
 
     @pytest.mark.asyncio
     async def test_creates_client_and_coordinator_and_stores_runtime_data(self):
@@ -466,9 +425,9 @@ class TestAsyncSetupEntry:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_registers_all_four_services(self):
+    async def test_does_not_register_services(self) -> None:
+        """Services are registered once in async_setup, not per config entry."""
         hass = _make_hass()
-        entry = _make_entry()
         mock_coordinator = MagicMock()
         mock_coordinator.async_config_entry_first_refresh = AsyncMock()
         mock_coordinator.async_wait_for_live_status = AsyncMock()
@@ -477,7 +436,19 @@ class TestAsyncSetupEntry:
             patch("andersen_ev.KonnectClient"),
             patch("andersen_ev.AndersenEvCoordinator", return_value=mock_coordinator),
         ):
-            await async_setup_entry(hass, entry)
+            await async_setup_entry(hass, _make_entry())
+
+        hass.services.async_register.assert_not_called()
+
+
+class TestAsyncSetup:
+    """Tests for async_setup()."""
+
+    @pytest.mark.asyncio
+    async def test_registers_all_four_services(self) -> None:
+        hass = _make_hass()
+
+        assert await async_setup(hass, {}) is True
 
         registered = {c.args[1]: c for c in hass.services.async_register.call_args_list}
         assert set(registered) == {
@@ -517,6 +488,58 @@ class TestAsyncSetupEntry:
         ]
 
 
+class TestAsyncMigrateEntry:
+    """Tests for async_migrate_entry()."""
+
+    @staticmethod
+    def _entry(version: int = 1, minor_version: int = 1) -> MagicMock:
+        return MagicMock(version=version, minor_version=minor_version, entry_id="entry_1")
+
+    @pytest.mark.asyncio
+    async def test_removes_retired_grid_power_entity(self) -> None:
+        hass = _make_hass()
+        entry = self._entry()
+        devices = [
+            MagicMock(identifiers={(DOMAIN, "device_1")}),
+            MagicMock(identifiers={(DOMAIN, "device_2"), ("other", "x")}),
+        ]
+        registry = MagicMock()
+        registry.async_get_entity_id.side_effect = lambda _domain, _platform, unique_id: (
+            "sensor.device_grid_power" if unique_id == "device_1_grid_power" else None
+        )
+
+        with (
+            patch("andersen_ev.er.async_get", return_value=registry),
+            patch("andersen_ev.dr.async_get"),
+            patch("andersen_ev.dr.async_entries_for_config_entry", return_value=devices),
+        ):
+            assert await async_migrate_entry(hass, entry) is True
+
+        registry.async_get_entity_id.assert_any_call("sensor", DOMAIN, "device_2_grid_power")
+        assert registry.async_get_entity_id.call_count == 2
+        registry.async_remove.assert_called_once_with("sensor.device_grid_power")
+        hass.config_entries.async_update_entry.assert_called_once_with(entry, minor_version=2)
+
+    @pytest.mark.asyncio
+    async def test_current_version_is_left_alone(self) -> None:
+        hass = _make_hass()
+
+        with patch("andersen_ev.er.async_get") as mock_er:
+            assert await async_migrate_entry(hass, self._entry(minor_version=2)) is True
+
+        mock_er.assert_not_called()
+        hass.config_entries.async_update_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_future_version_is_refused(self) -> None:
+        """A downgrade from a newer major version can't be migrated."""
+        hass = _make_hass()
+
+        assert await async_migrate_entry(hass, self._entry(version=2)) is False
+
+        hass.config_entries.async_update_entry.assert_not_called()
+
+
 class TestAsyncUnloadEntry:
     """Tests for async_unload_entry()."""
 
@@ -547,22 +570,22 @@ class TestDisableAllSchedulesService:
 
     @pytest.mark.asyncio
     async def test_calls_device_method_without_refresh(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+        call_service, coordinator = await _setup_and_get_handlers()
         device = _make_device(device_id="device_1")
         coordinator.data = [device]
 
-        await handlers[SERVICE_DISABLE_ALL_SCHEDULES](_make_call("device_1"))
+        await call_service(SERVICE_DISABLE_ALL_SCHEDULES, "device_1")
 
         device.disable_all_schedules.assert_awaited_once()
         coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_unknown_device_raises_home_assistant_error(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+    async def test_unknown_device_raises_service_validation_error(self):
+        call_service, coordinator = await _setup_and_get_handlers()
         coordinator.data = []
 
-        with pytest.raises(HomeAssistantError):
-            await handlers[SERVICE_DISABLE_ALL_SCHEDULES](_make_call("missing"))
+        with pytest.raises(ServiceValidationError):
+            await call_service(SERVICE_DISABLE_ALL_SCHEDULES, "missing")
 
 
 class TestGetDeviceInfoService:
@@ -570,32 +593,32 @@ class TestGetDeviceInfoService:
 
     @pytest.mark.asyncio
     async def test_returns_device_info_when_found(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+        call_service, coordinator = await _setup_and_get_handlers()
         device = _make_device(device_id="device_1")
         device.get_device_info = AsyncMock(return_value={"name": "Andersen A2"})
         coordinator.data = [device]
 
-        result = await handlers[SERVICE_GET_DEVICE_INFO](_make_call("device_1"))
+        result = await call_service(SERVICE_GET_DEVICE_INFO, "device_1")
 
         assert result == {"name": "Andersen A2"}
 
     @pytest.mark.asyncio
     async def test_raises_when_device_info_is_none(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+        call_service, coordinator = await _setup_and_get_handlers()
         device = _make_device(device_id="device_1")
         device.get_device_info = AsyncMock(return_value=None)
         coordinator.data = [device]
 
         with pytest.raises(HomeAssistantError):
-            await handlers[SERVICE_GET_DEVICE_INFO](_make_call("device_1"))
+            await call_service(SERVICE_GET_DEVICE_INFO, "device_1")
 
     @pytest.mark.asyncio
-    async def test_unknown_device_raises_home_assistant_error(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+    async def test_unknown_device_raises_service_validation_error(self):
+        call_service, coordinator = await _setup_and_get_handlers()
         coordinator.data = []
 
-        with pytest.raises(HomeAssistantError):
-            await handlers[SERVICE_GET_DEVICE_INFO](_make_call("missing"))
+        with pytest.raises(ServiceValidationError):
+            await call_service(SERVICE_GET_DEVICE_INFO, "missing")
 
 
 class TestGetDeviceStatusService:
@@ -603,32 +626,32 @@ class TestGetDeviceStatusService:
 
     @pytest.mark.asyncio
     async def test_returns_device_status_when_found(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+        call_service, coordinator = await _setup_and_get_handlers()
         device = _make_device(device_id="device_1")
         device.get_detailed_device_status = AsyncMock(return_value={"online": True})
         coordinator.data = [device]
 
-        result = await handlers[SERVICE_GET_DEVICE_STATUS](_make_call("device_1"))
+        result = await call_service(SERVICE_GET_DEVICE_STATUS, "device_1")
 
         assert result == {"online": True}
 
     @pytest.mark.asyncio
     async def test_raises_when_device_status_is_none(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+        call_service, coordinator = await _setup_and_get_handlers()
         device = _make_device(device_id="device_1")
         device.get_detailed_device_status = AsyncMock(return_value=None)
         coordinator.data = [device]
 
         with pytest.raises(HomeAssistantError):
-            await handlers[SERVICE_GET_DEVICE_STATUS](_make_call("device_1"))
+            await call_service(SERVICE_GET_DEVICE_STATUS, "device_1")
 
     @pytest.mark.asyncio
-    async def test_unknown_device_raises_home_assistant_error(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+    async def test_unknown_device_raises_service_validation_error(self):
+        call_service, coordinator = await _setup_and_get_handlers()
         coordinator.data = []
 
-        with pytest.raises(HomeAssistantError):
-            await handlers[SERVICE_GET_DEVICE_STATUS](_make_call("missing"))
+        with pytest.raises(ServiceValidationError):
+            await call_service(SERVICE_GET_DEVICE_STATUS, "missing")
 
 
 class TestResetRcmService:
@@ -636,19 +659,19 @@ class TestResetRcmService:
 
     @pytest.mark.asyncio
     async def test_calls_device_method_without_refresh(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+        call_service, coordinator = await _setup_and_get_handlers()
         device = _make_device(device_id="device_1")
         coordinator.data = [device]
 
-        await handlers[SERVICE_RCM_RESET](_make_call("device_1"))
+        await call_service(SERVICE_RCM_RESET, "device_1")
 
         device.reset_rcm.assert_awaited_once()
         coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_unknown_device_raises_home_assistant_error(self):
-        handlers, coordinator = await _setup_and_get_handlers()
+    async def test_unknown_device_raises_service_validation_error(self):
+        call_service, coordinator = await _setup_and_get_handlers()
         coordinator.data = []
 
-        with pytest.raises(HomeAssistantError):
-            await handlers[SERVICE_RCM_RESET](_make_call("missing"))
+        with pytest.raises(ServiceValidationError):
+            await call_service(SERVICE_RCM_RESET, "missing")

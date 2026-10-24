@@ -4,41 +4,66 @@ import asyncio
 import logging
 from datetime import timedelta
 
-import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, ServiceCall, SupportsResponse, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    ATTR_DEVICE_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     LIVE_STATUS_SETUP_TIMEOUT,
     LIVE_STATUS_TIMEOUT,
-    SERVICE_DISABLE_ALL_SCHEDULES,
-    SERVICE_GET_DEVICE_INFO,
-    SERVICE_GET_DEVICE_STATUS,
-    SERVICE_RCM_RESET,
     SUBSCRIPTION_RETRY_MAX,
     SUBSCRIPTION_RETRY_MIN,
 )
+from .entity import DEVICE_INFO_FIELDS, device_info_from_status
 from .konnect.changes import format_changes
 from .konnect.client import KonnectClient
 from .konnect.device import KonnectDevice
 from .konnect.exceptions import AndersenApiError, AndersenAuthError, AndersenError
+from .services import async_setup_services
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = [Platform.BUTTON, Platform.LOCK, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 type AndersenEvConfigEntry = ConfigEntry[AndersenEvCoordinator]
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up the Andersen EV integration."""
+    async_setup_services(hass)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:
+    """Migrate an old config entry."""
+    if entry.version > 1:
+        # Downgraded from a future version.
+        return False
+    if entry.minor_version < 2:
+        # grid_power duplicated system_grid_power and its source field is always null.
+        entity_registry = er.async_get(hass)
+        device_registry = dr.async_get(hass)
+        for device_entry in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+            for domain, device_id in device_entry.identifiers:
+                if domain == DOMAIN and (
+                    entity_id := entity_registry.async_get_entity_id("sensor", DOMAIN, f"{device_id}_grid_power")
+                ):
+                    entity_registry.async_remove(entity_id)
+        hass.config_entries.async_update_entry(entry, minor_version=2)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:
@@ -57,124 +82,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
 
     entry.async_on_unload(coordinator.async_add_listener(_make_stale_device_listener(hass, coordinator)))
 
-    coordinator.async_start_subscriptions()
-    # Picks up devices added to, or removed from, the account after setup.
-    entry.async_on_unload(coordinator.async_add_listener(coordinator.async_start_subscriptions))
     # Entities read the subscription, and some (e.g. whether solar power is enabled) are decided from
     # its first payload, so give it a moment to arrive before creating them.
     await coordinator.async_wait_for_live_status(LIVE_STATUS_SETUP_TIMEOUT)
-    _remove_retired_entities(hass, coordinator)
-
-    # Register services
-    async def disable_all_schedules(call: ServiceCall) -> None:
-        """Disable all schedules for a device."""
-        device_id = call.data.get(ATTR_DEVICE_ID)
-        devices = coordinator.data
-
-        for device in devices:
-            if device.device_id == device_id:
-                await device.disable_all_schedules()
-                break
-        else:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="device_not_found",
-                translation_placeholders={"device_id": str(device_id)},
-            )
-
-    async def get_device_info(call: ServiceCall) -> dict:
-        """Get detailed information for a device and return it to the UI."""
-        device_id = call.data.get(ATTR_DEVICE_ID)
-        devices = coordinator.data
-
-        for device in devices:
-            if device.device_id == device_id:
-                device_info = await device.get_device_info()
-                if device_info:
-                    # Return the device info as a response that will be shown in the UI
-                    return device_info
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="get_device_info_failed",
-                    translation_placeholders={"device_id": str(device_id)},
-                )
-
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="device_not_found",
-            translation_placeholders={"device_id": str(device_id)},
-        )
-
-    async def get_device_status(call: ServiceCall) -> dict:
-        """Get detailed status for a device and return it to the UI."""
-        device_id = call.data.get(ATTR_DEVICE_ID)
-        devices = coordinator.data
-
-        for device in devices:
-            if device.device_id == device_id:
-                device_status = await device.get_detailed_device_status()
-                if device_status:
-                    return device_status
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="get_device_status_failed",
-                    translation_placeholders={"device_id": str(device_id)},
-                )
-
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="device_not_found",
-            translation_placeholders={"device_id": str(device_id)},
-        )
-
-    async def reset_rcm(call: ServiceCall) -> None:
-        """Reset RCM fault for a device."""
-        device_id = call.data.get(ATTR_DEVICE_ID)
-        devices = coordinator.data
-
-        for device in devices:
-            if device.device_id == device_id:
-                await device.reset_rcm()
-                break
-        else:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="device_not_found",
-                translation_placeholders={"device_id": str(device_id)},
-            )
-
-    # Register services using simpler schema
-    service_schema = vol.Schema({vol.Required(ATTR_DEVICE_ID): str})
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_DISABLE_ALL_SCHEDULES,
-        disable_all_schedules,
-        schema=service_schema,
-    )
-
-    # Register the get_device_info service with response support
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_DEVICE_INFO,
-        get_device_info,
-        schema=service_schema,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    # Register the get_device_status service with response support
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_DEVICE_STATUS,
-        get_device_status,
-        schema=service_schema,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    # Register the reset_rcm service
-    hass.services.async_register(DOMAIN, SERVICE_RCM_RESET, reset_rcm, schema=service_schema)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Covers a payload that arrived after the wait but before the devices were registered.
+    coordinator.async_update_device_registry()
     return True
 
 
@@ -271,6 +185,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Failed to fetch last charge for %s: %s", device.friendly_name, err)
 
+        self.async_start_subscriptions()
         return self.devices
 
     @callback
@@ -279,7 +194,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         assert self.config_entry is not None
         current = {device.device_id: device for device in self.devices}
         for device_id in self._subscription_tasks.keys() - current.keys():
-            self._subscription_tasks.pop(device_id).cancel()
+            self._forget_device(device_id)
         for device_id, device in current.items():
             if device_id not in self._subscription_tasks:
                 self._subscription_tasks[device_id] = self.config_entry.async_create_background_task(
@@ -287,6 +202,14 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                     self._async_run_subscription(device),
                     name=f"{DOMAIN} subscription {device_id}",
                 )
+
+    def _forget_device(self, device_id: str) -> None:
+        """Stop a removed device's subscription and drop its live status state."""
+        self._subscription_tasks.pop(device_id).cancel()
+        if unsub := self._live_timeout_unsubs.pop(device_id, None):
+            unsub()
+        self._subscription_failing.discard(device_id)
+        self._live_status_received.pop(device_id, None)
 
     async def async_stop_subscriptions(self) -> None:
         """Cancel every subscription loop and wait for them to finish."""
@@ -323,6 +246,17 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                     async for payload in device.subscription.updates():
                         self._handle_subscription_payload(device, payload)
                         retry_delay = SUBSCRIPTION_RETRY_MIN
+                except AndersenAuthError as err:
+                    # Retrying with credentials that are refused would only repeat the failure.
+                    self._mark_disconnected(device)
+                    _LOGGER.warning(
+                        "Live status subscription for %s was refused the login (%s), starting re-authentication",
+                        device.friendly_name,
+                        err,
+                    )
+                    assert self.config_entry is not None
+                    self.config_entry.async_start_reauth(self.hass)
+                    return
                 except AndersenError as err:
                     reason = err
                 except Exception as err:  # pylint: disable=broad-exception-caught
@@ -356,16 +290,37 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         elif changes:
             _LOGGER.debug("deviceStatusUpdated for %s: %s", device.friendly_name, format_changes(changes))
         self._live_status_event(device.device_id).set()
-        if changes:
-            device.update_solar_status_from_device_status(device.live_status)
-            self.async_update_listeners()
+        if not changes:
+            return
+        device.update_solar_status_from_device_status(device.live_status)
+        if not changes.keys().isdisjoint(DEVICE_INFO_FIELDS):
+            self._update_device_registry_entry(device)
+        self.async_update_listeners()
 
-    def _mark_subscription_lost(self, device: KonnectDevice, reason: object, retry_delay: int) -> None:
-        """Record a dropped subscription, warning once until it is restored."""
+    @callback
+    def async_update_device_registry(self) -> None:
+        """Write each device's model, versions and serial number from its live status to the registry."""
+        for device in self.devices:
+            self._update_device_registry_entry(device)
+
+    def _update_device_registry_entry(self, device: KonnectDevice) -> None:
+        # Before the platforms are set up the device isn't registered yet; its entities fill it in then.
+        device_registry = dr.async_get(self.hass)
+        if (device_entry := device_registry.async_get_device(identifiers={(DOMAIN, device.device_id)})) and (
+            info := device_info_from_status(device.live_status)
+        ):
+            device_registry.async_update_device(device_entry.id, **info)
+
+    def _mark_disconnected(self, device: KonnectDevice) -> None:
+        """Record that the subscription is down, starting the countdown to unavailable."""
         device.subscription_connected = False
         if device.subscription_disconnected_since is None:
             device.subscription_disconnected_since = dt_util.utcnow()
             self._schedule_live_timeout(device)
+
+    def _mark_subscription_lost(self, device: KonnectDevice, reason: object, retry_delay: int) -> None:
+        """Record a dropped subscription, warning once until it is restored."""
+        self._mark_disconnected(device)
         if device.device_id in self._subscription_failing:
             _LOGGER.debug(
                 "Live status subscription for %s still unavailable (%s), retrying in %s s",
@@ -410,15 +365,6 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         if device.device_id in self._rest_failing:
             _LOGGER.info("REST device data for %s is available again", device.friendly_name)
             self._rest_failing.discard(device.device_id)
-
-
-def _remove_retired_entities(hass: HomeAssistant, coordinator: AndersenEvCoordinator) -> None:
-    """Remove registry entries for entities the integration no longer creates."""
-    entity_registry = er.async_get(hass)
-    for device in coordinator.devices:
-        # grid_power duplicated system_grid_power and its source field is always null.
-        if entity_id := entity_registry.async_get_entity_id("sensor", DOMAIN, f"{device.device_id}_grid_power"):
-            entity_registry.async_remove(entity_id)
 
 
 def _make_stale_device_listener(hass: HomeAssistant, coordinator: AndersenEvCoordinator):

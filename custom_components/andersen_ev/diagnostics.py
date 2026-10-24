@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from . import AndersenEvConfigEntry
 from .konnect.device import KonnectDevice
 
-TO_REDACT = {"email", "password", "token", "refreshToken", "deviceKey"}
+TO_REDACT = {"email", "password", "token", "refreshToken", "deviceKey", "sysSSID", "konnectSerial", "eui"}
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> dict[str, Any]:
@@ -35,7 +35,6 @@ def _device_diagnostics(device: KonnectDevice) -> dict[str, Any]:
         "friendly_name": device.friendly_name,
         "user_lock": device.user_lock,
         "model_name": device.model_name,
-        "last_status": device.last_status,
         # Only the REST status; its device and info objects hold account emails.
         "last_rest_status": device.last_rest_status,
         "subscription": {

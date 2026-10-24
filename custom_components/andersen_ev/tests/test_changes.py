@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from andersen_ev.konnect.changes import find_changes, format_changes
+from andersen_ev.konnect.changes import find_changes, format_changes, merge_changes
 
 
 @pytest.mark.parametrize(
@@ -22,6 +22,42 @@ from andersen_ev.konnect.changes import find_changes, format_changes
 )
 def test_find_changes(old: dict[str, Any], new: dict[str, Any], expected: dict[str, tuple[Any, Any]]) -> None:
     assert find_changes(old, new) == expected
+
+
+@pytest.mark.parametrize(
+    ("cache", "update", "merged", "expected"),
+    [
+        pytest.param({"a": 1}, {"a": 1}, {"a": 1}, {}, id="unchanged"),
+        pytest.param({"a": 1, "b": 2}, {"a": 3}, {"a": 3, "b": 2}, {"a": (1, 3)}, id="missing_field_kept"),
+        pytest.param({}, {"a": None}, {"a": None}, {"a": (None, None)}, id="new_field"),
+        pytest.param(
+            {"status": {"x": 1, "y": 2}},
+            {"status": {"y": 3}},
+            {"status": {"x": 1, "y": 3}},
+            {"status.y": (2, 3)},
+            id="nested_merged_key_by_key",
+        ),
+        pytest.param(
+            {"status": {"x": 1}}, {"status": None}, {"status": None}, {"status": ({"x": 1}, None)}, id="nulled"
+        ),
+    ],
+)
+def test_merge_changes(
+    cache: dict[str, Any], update: dict[str, Any], merged: dict[str, Any], expected: dict[str, tuple[Any, Any]]
+) -> None:
+    assert merge_changes(cache, update) == expected
+    assert cache == merged
+
+
+def test_merge_changes_copies_new_nested_objects() -> None:
+    """Later changes to the update must not leak into the cache."""
+    update = {"status": {"x": 1}}
+    cache: dict[str, Any] = {}
+
+    merge_changes(cache, update)
+    update["status"]["x"] = 2
+
+    assert cache == {"status": {"x": 1}}
 
 
 @pytest.mark.parametrize(

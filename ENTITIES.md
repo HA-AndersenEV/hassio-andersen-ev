@@ -10,7 +10,7 @@ Every entity the integration creates for each charger, where its value comes fro
 | **GraphQL query** | A request to `https://graphql-mobile.andersen-ev.com` | Polled every 60 seconds, or once at startup, as noted per entity |
 | **HTTP GET** | Andersen's mobile REST API | Polled every 60 seconds |
 
-Entities read from the subscription show **unknown** until the first live update after Home Assistant starts (setup waits up to 15 seconds for it). They become **unavailable** once the subscription has been disconnected for 5 minutes, and recover on the next update.
+Entities read from the subscription show **unknown** until the first live update after Home Assistant starts (setup waits up to 5 seconds for it). They become **unavailable** once the subscription has been disconnected for 5 minutes, and recover on the next update.
 
 Changes made from Home Assistant are not shown straight away. The entity changes when the charger reports the new value through the subscription.
 
@@ -23,7 +23,7 @@ Unique IDs are `<device id>_<suffix>`, using the suffix in the Entity column. En
 | Connector (`connector`) | Sensor, enum | GraphQL subscription | `evseState` | — | 1 Ready, 2 Connected, 3 Charging, 4 Error, 254 Sleeping, 255 Disabled. Anything else, including the 0 seen briefly while a charge starts, shows `unknown` |
 | Charge Power (`charge_power`) | Sensor, power (W) | GraphQL subscription | `chargeStatus.chargePower` | — | Charger output for the current session. Updates several times as a session starts, then every 40–90 seconds, and once at the end. Keeps the last session's value between sessions |
 | Max Charge Power (`charge_power_max`) | Sensor, power (kW) | GraphQL subscription | `chargeStatus.chargePowerMax` | — | Highest charge power in the current session |
-| Solar Power (`solar_power`) | Sensor, power (W) | GraphQL subscription | `sysSolarPower` (kW, shown in W) | — | Reading from the charger's solar CT clamp. Unknown when no solar CT is fitted (`sysSolarCT` false). Enabled by default only if a solar CT is fitted when the entity is first created |
+| Solar Power (`solar_power`) | Sensor, power (W) | GraphQL subscription | `sysSolarPower` (kW, shown in W) | — | Reading from the charger's solar CT clamp. Unknown when no solar CT is fitted (`sysSolarCT` false). Enabled by default only if a solar CT is fitted when the entity is first created; if the first live update hasn't arrived within 5 seconds it starts disabled, and can be enabled by hand |
 | Current Session Energy (`current_charge_energy`) | Sensor, energy (kWh), total | GraphQL subscription | `chargeStatus.chargeEnergyTotal` | — | Energy delivered to the car this session. Starts a new metering cycle at each session start |
 | Current Session Solar Energy (`current_solar_energy`) | Sensor, energy (kWh), total | GraphQL subscription | `chargeStatus.solarEnergyTotal` | — | Needs a solar CT; otherwise holds a stale value |
 | Current Session Grid Energy (`current_grid_energy`) | Sensor, energy (kWh), total | GraphQL subscription | `chargeStatus.gridEnergyTotal` | — | All grid import during the session, **including the rest of the house**, not only the car's share |

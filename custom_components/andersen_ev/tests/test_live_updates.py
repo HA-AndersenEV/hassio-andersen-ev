@@ -107,7 +107,7 @@ def test_later_payload_logs_only_changes(mock_device: KonnectDevice, caplog: pyt
         mock_device, {**INITIAL, "evseState": 3, "chargeStatus": {"chargePower": 7120, "duration": 10}}
     )
 
-    assert "deviceStatusUpdated for Test Device: evseState 1 -> 3, chargeStatus.chargePower 0 -> 7120" in caplog.text
+    assert "deviceStatusUpdated for Test Device: chargeStatus.chargePower 0 -> 7120, evseState 1 -> 3" in caplog.text
     assert "(initial)" not in caplog.text
     assert _status(mock_device)["chargeStatus"] == {"chargePower": 7120, "duration": 10}
 
@@ -131,7 +131,6 @@ def test_unchanged_payload_logs_nothing(mock_device: KonnectDevice, caplog: pyte
     "failure",
     [
         pytest.param(AndersenSubscriptionError("Connection was closed"), id="dropped"),
-        pytest.param(AndersenAuthError("refused"), id="auth"),
         pytest.param(None, id="server_ended"),
     ],
 )
@@ -165,6 +164,27 @@ async def test_resubscribes_after_failure_and_logs_once(
     assert "still unavailable" in caplog.text
     assert _status(mock_device)["evseState"] == 2
     assert mock_device.subscription_connected is False
+    subscription.close.assert_awaited_once()
+
+
+async def test_refused_login_starts_reauth_and_stops(
+    mock_device: KonnectDevice, caplog: pytest.LogCaptureFixture, call_later: MagicMock
+) -> None:
+    """Retrying refused credentials can't help, so the loop asks for reauthentication and ends."""
+    harness = _Harness()
+    subscription = _attach_subscription(mock_device, _connection(INITIAL, AndersenAuthError("refused")))
+
+    sleep = AsyncMock()
+    with patch("andersen_ev.asyncio.sleep", sleep):
+        await harness.coordinator._async_run_subscription(mock_device)
+
+    harness.entry.async_start_reauth.assert_called_once_with(harness.coordinator.hass)
+    sleep.assert_not_awaited()
+    assert "refused the login" in caplog.text
+    assert mock_device.subscription_connected is False
+    assert mock_device.subscription_disconnected_since is not None
+    # The countdown to unavailable runs as for any other loss.
+    assert mock_device.device_id in harness.coordinator._live_timeout_unsubs
     subscription.close.assert_awaited_once()
 
 
@@ -247,6 +267,26 @@ async def test_start_subscriptions_follows_devices(mock_api: MagicMock) -> None:
     assert coordinator._subscription_tasks == {"a": tasks["a"]}
     tasks["b"].cancel.assert_called_once()
     tasks["a"].cancel.assert_not_called()
+
+
+async def test_removed_device_state_is_dropped(mock_device: KonnectDevice) -> None:
+    """A device that leaves the account loses its task, pending timeout and failure and payload tracking."""
+    harness = _Harness()
+    coordinator = harness.coordinator
+    task = MagicMock()
+    coordinator._subscription_tasks = {mock_device.device_id: task}
+    coordinator._mark_subscription_lost(mock_device, "down", 5)
+    coordinator._live_status_event(mock_device.device_id)
+    unsub = cast(MagicMock, coordinator._live_timeout_unsubs[mock_device.device_id])
+
+    coordinator.async_start_subscriptions()
+
+    task.cancel.assert_called_once()
+    unsub.assert_called_once()
+    assert coordinator._subscription_tasks == {}
+    assert coordinator._live_timeout_unsubs == {}
+    assert coordinator._subscription_failing == set()
+    assert coordinator._live_status_received == {}
 
 
 async def test_stop_subscriptions_cancels_and_waits() -> None:
@@ -358,3 +398,70 @@ def test_rescheduling_live_timeout_cancels_the_previous_one(mock_device: Konnect
 
     first.assert_called_once()
     assert harness.coordinator._live_timeout_unsubs[mock_device.device_id] is not first
+
+
+DEVICE_INFO = {
+    "sysProductId": "30",
+    "sysProductName": "Thurlestone",
+    "sysHwVersion": "4",
+    "sysFwVersion": "630",
+    "konnectSerial": "1234567890",
+}
+
+
+@pytest.fixture
+def device_registry() -> Generator[MagicMock]:
+    """Stand in for the device registry, holding a registered entry for each charger."""
+    registry = MagicMock()
+    registry.async_get_device.return_value = MagicMock(id="registry_id")
+    with patch("andersen_ev.dr.async_get", return_value=registry):
+        yield registry
+
+
+def test_device_info_change_updates_registry(mock_device: KonnectDevice, device_registry: MagicMock) -> None:
+    """A firmware update reported by the charger reaches the device page."""
+    harness = _Harness()
+    harness.coordinator._handle_subscription_payload(mock_device, {**INITIAL, **DEVICE_INFO})
+    device_registry.async_update_device.reset_mock()
+
+    harness.coordinator._handle_subscription_payload(mock_device, {"sysFwVersion": "631"})
+
+    device_registry.async_get_device.assert_called_with(identifiers={("andersen_ev", "test_device_123")})
+    device_registry.async_update_device.assert_called_once_with(
+        "registry_id",
+        model="A2",
+        model_id="30",
+        hw_version="4",
+        sw_version="631",
+        serial_number="1234567890",
+    )
+
+
+def test_other_changes_leave_registry_alone(mock_device: KonnectDevice, device_registry: MagicMock) -> None:
+    harness = _Harness()
+    harness.coordinator._handle_subscription_payload(mock_device, {**INITIAL, **DEVICE_INFO})
+    device_registry.async_update_device.reset_mock()
+
+    harness.coordinator._handle_subscription_payload(mock_device, {"evseState": 3})
+
+    device_registry.async_update_device.assert_not_called()
+
+
+def test_update_device_registry_skips_unregistered_and_empty(
+    mock_device: KonnectDevice, mock_api: MagicMock, device_registry: MagicMock
+) -> None:
+    """Devices not registered yet, or without a live status, are left for their entities to fill in."""
+    harness = _Harness()
+    unregistered = KonnectDevice(api=mock_api, device_id="other", friendly_name="Other", user_lock=False)
+    unregistered.apply_subscription_update(DEVICE_INFO)
+    mock_device.apply_subscription_update(DEVICE_INFO)
+    no_status = KonnectDevice(api=mock_api, device_id="empty", friendly_name="Empty", user_lock=False)
+    harness.coordinator.devices = [mock_device, unregistered, no_status]
+    device_registry.async_get_device.side_effect = lambda identifiers: (
+        None if identifiers == {("andersen_ev", "other")} else MagicMock(id=f"registry_{identifiers}")
+    )
+
+    harness.coordinator.async_update_device_registry()
+
+    device_registry.async_update_device.assert_called_once()
+    assert device_registry.async_update_device.call_args.kwargs["sw_version"] == "630"

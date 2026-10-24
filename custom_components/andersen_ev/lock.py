@@ -81,8 +81,6 @@ class AndersenEvLock(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoor
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                # Try to update model info if we have device status
-                self._update_device_info_from_status()
                 return live_status_available(device)
 
         # Device no longer exists

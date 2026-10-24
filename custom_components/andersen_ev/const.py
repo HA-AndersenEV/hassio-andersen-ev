@@ -16,7 +16,7 @@ SUBSCRIPTION_RETRY_MAX = 300  # seconds
 # Entities fed by the subscription go unavailable once it has been disconnected this long.
 LIVE_STATUS_TIMEOUT = timedelta(minutes=5)
 # How long setup waits for the first subscription payload before creating entities anyway.
-LIVE_STATUS_SETUP_TIMEOUT = 15  # seconds
+LIVE_STATUS_SETUP_TIMEOUT = 5  # seconds
 
 # Converts charge current to power, as the Konnect+ app does (32 A gives 7.2 kW).
 KW_PER_AMP = 0.225

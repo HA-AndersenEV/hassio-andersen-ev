@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from . import const
+from .changes import merge_changes
 from .graphql_client import GraphQLClient
 from .subscription import DeviceStatusSubscription
 
@@ -99,9 +100,7 @@ class KonnectDevice:
         """
         if self._last_subscription_status is None:
             self._last_subscription_status = {}
-        changes: dict[str, tuple[Any, Any]] = {}
-        _merge_status(self._last_subscription_status, payload, "", changes)
-        return changes
+        return merge_changes(self._last_subscription_status, payload)
 
     @property
     def last_charge(self):
@@ -562,18 +561,3 @@ class KonnectDevice:
         if currency:
             self.currency = currency
         return device_info
-
-
-def _merge_status(
-    cache: dict[str, Any], payload: dict[str, Any], prefix: str, changes: dict[str, tuple[Any, Any]]
-) -> None:
-    """Merge payload into cache in place, merging nested objects key by key and recording changes."""
-    for key, value in payload.items():
-        name = f"{prefix}{key}"
-        old = cache.get(key)
-        if isinstance(value, dict) and isinstance(old, dict):
-            _merge_status(old, value, f"{name}.", changes)
-            continue
-        if key not in cache or old != value:
-            changes[name] = (old, value)
-        cache[key] = dict(value) if isinstance(value, dict) else value

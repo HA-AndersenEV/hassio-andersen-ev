@@ -647,7 +647,8 @@ class AndersenEvSolarPowerSensor(AndersenEvLiveSensor):
             SensorDeviceClass.POWER,
             SensorStateClass.MEASUREMENT,
             UnitOfPower.WATT,
-            # Only decided when the entity is first registered; existing users keep their setting.
+            # Only decided when the entity is first registered, and disabled if the live status hasn't
+            # arrived by then; users can still enable it, and existing users keep their setting.
             enabled_default=bool(device.live_status.get("sysSolarCT")),
         )
 

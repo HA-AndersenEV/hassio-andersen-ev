@@ -20,6 +20,8 @@ last-session energy and cost sensors.
   minutes. One warning is logged when it is lost and one message when it is restored. Entities keep
   their last values until the connection has been down for 5 minutes, then become unavailable
   until it returns.
+* If the subscription refuses the login even after refreshing it, the integration stops retrying
+  and asks you to sign in again (re-authentication).
 
 **Some data is still polled**, every 60 seconds, because the subscription doesn't carry it:
 
