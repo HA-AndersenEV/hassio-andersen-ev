@@ -5,13 +5,15 @@ on:
     inputs:
       base_version:
         description: >-
-          Base semver for the beta (defaults to manifest.json version).
+          Base semver for the beta. Defaults to the version in the open
+          release PR, or to the manifest.json version if there is none.
           Tag will be v<base_version>-beta.<run_number>.
         required: false
         default: ""
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   cut-beta:
@@ -27,6 +29,7 @@ jobs:
       - name: Resolve base version and beta tag
         id: ver
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_BASE_VERSION: ${{ github.event.inputs.base_version }}
           RUN_NUMBER: ${{ github.run_number }}
         run: |
@@ -35,7 +38,18 @@ jobs:
           if [ -n "$INPUT_BASE_VERSION" ]; then
             base="$INPUT_BASE_VERSION"
           else
-            base="$(python -c "import json;print(json.load(open('$manifest'))['version'])")"
+            # The open release PR is titled "chore(main): release X.Y.Z". Using its
+            # version keeps the beta above the last stable and below the next one.
+            # A gh failure must fail the job, not silently fall back to the manifest version.
+            title="$(gh pr list --head release-please--branches--main --state open \
+              --json title --jq '.[0].title // ""')"
+            base="$(sed -nE 's/^.*release ([0-9]+\.[0-9]+\.[0-9]+).*$/\1/p' <<<"$title" | head -n1)"
+            if [ -n "$base" ]; then
+              echo "Base version $base taken from the open release PR"
+            else
+              base="$(python -c "import json;print(json.load(open('$manifest'))['version'])")"
+              echo "No open release PR; base version $base taken from manifest.json"
+            fi
           fi
           beta="${base}-beta.${RUN_NUMBER}"
           tag="v${beta}"
