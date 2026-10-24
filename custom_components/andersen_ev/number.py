@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import ALLOWED_USER_MAX_AMPS, DOMAIN
-from .entity import AndersenEvDeviceInfoMixin
+from .entity import AndersenEvDeviceInfoMixin, live_status_available
 from .grid_source import (
     MIN_GRID_SOURCE_POWER_KW,
     amps_to_kw,
@@ -95,20 +95,6 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
         self._attr_native_min_value = 0.0
         self._attr_native_step = 0.1
         self._attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
-        self._attr_native_value = None
-
-    def _update_model_from_device_status(self):
-        """Update model information from device status if available."""
-        if hasattr(self._device, "model_name") and self._device.model_name:
-            self._attr_device_info["model"] = self._device.model_name
-        elif self._device.last_status:
-            status = self._device.last_status
-            if "sysProductName" in status:
-                self._attr_device_info["model"] = status["sysProductName"]
-            elif "sysProductId" in status:
-                self._attr_device_info["model"] = status["sysProductId"]
-            elif "sysHwVersion" in status:
-                self._attr_device_info["model"] = f"A2 (HW: {status['sysHwVersion']})"
 
     @property
     def available(self) -> bool:
@@ -116,7 +102,7 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     def _refresh_device(self) -> None:
@@ -192,13 +178,6 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
                 },
             )
 
-        self._device.update_solar_status_cache(
-            {"solarMaxGridChargePercent": percent, "solarChargeAlways": charge_always}
-        )
-        self._attr_native_value = grid_source_percent_to_kw(percent, max_amps)
-        self.async_write_ha_state()
-        await self.coordinator.async_request_refresh()
-
 
 class AndersenEvUserMaxCharge(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], NumberEntity):  # pylint: disable=abstract-method
     """Base for the user max charge current, set in the app's power settings.
@@ -236,7 +215,7 @@ class AndersenEvUserMaxCharge(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ander
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     def _allowed_amps(self) -> list[int]:
@@ -281,11 +260,6 @@ class AndersenEvUserMaxCharge(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ander
                 translation_key="user_max_current_failed",
                 translation_placeholders={"device_name": device_name},
             )
-
-        self._device.update_rest_status_cache({"sysUserMaxChargeAmpSet": amps})
-        # Updates the linked current/power entity too, not just this one.
-        self.coordinator.async_update_listeners()
-        await self.coordinator.async_request_refresh()
 
 
 class AndersenEvUserMaxCurrentNumber(AndersenEvUserMaxCharge):  # pylint: disable=abstract-method

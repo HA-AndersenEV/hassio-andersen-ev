@@ -15,16 +15,20 @@ from andersen_ev.sensor import (
     AndersenEvCostSensor,
     AndersenEvEnergySensor,
     AndersenEvLiveSensor,
+    AndersenEvSolarPowerSensor,
     _build_entities_for_device,
     async_setup_entry,
 )
+
+# Disconnected for longer than LIVE_STATUS_TIMEOUT, so live entities are unavailable.
+DISCONNECTED_LONG_AGO = dt_util.utcnow() - timedelta(minutes=6)
 
 
 def _make_device(
     device_id="device_1",
     friendly_name="Device",
-    status_available=True,
-    last_status=None,
+    live_status=None,
+    disconnected_since=None,
     last_charge=None,
     currency=None,
 ):
@@ -32,12 +36,11 @@ def _make_device(
     device = MagicMock()
     device.device_id = device_id
     device.friendly_name = friendly_name
-    device.status_available = status_available
-    device.last_status = last_status
+    device.live_status = live_status or {}
+    device.subscription_disconnected_since = disconnected_since
     device.last_charge = last_charge
     device.currency = currency
     device.get_last_charge = AsyncMock(return_value=last_charge)
-    device.get_detailed_device_status = AsyncMock(return_value=last_status)
     device.get_device_info = AsyncMock(return_value=None)
     return device
 
@@ -66,12 +69,14 @@ class TestAsyncSetupEntry:
         await async_setup_entry(MagicMock(), entry, async_add_entities)
 
         entities = async_add_entities.call_args.args[0]
-        assert len(entities) == 46
+        assert len(entities) == 44
         assert sum(isinstance(e, AndersenEvEnergySensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvCostSensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvConnectorSensor) for e in entities) == 2
-        assert sum(isinstance(e, AndersenEvChargeStatusSensor) for e in entities) == 16
-        assert sum(isinstance(e, AndersenEvLiveSensor) for e in entities) == 12
+        assert sum(isinstance(e, AndersenEvChargeStatusSensor) for e in entities) == 12
+        assert sum(isinstance(e, AndersenEvLiveSensor) for e in entities) == 14
+        assert sum(isinstance(e, AndersenEvSolarPowerSensor) for e in entities) == 2
+        assert not any(e.unique_id.endswith("_grid_power") and "sys" not in e.unique_id for e in entities)
 
     @pytest.mark.asyncio
     async def test_no_devices_creates_no_entities(self):
@@ -108,7 +113,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 23
+        assert len(new_entities) == 22
         assert all(entity._device.device_id == "device_2" for entity in new_entities)
 
     @pytest.mark.asyncio
@@ -149,7 +154,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 23
+        assert len(new_entities) == 22
         assert all(entity._device.device_id == "device_1" for entity in new_entities)
 
 
@@ -172,7 +177,7 @@ class TestBaseSensorUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvBaseSensor._update_device_info_from_status()."""
 
     def test_known_product_id_maps_to_the_marketed_model_name(self):
-        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
+        device = _make_device(live_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
@@ -180,7 +185,7 @@ class TestBaseSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 99})
+        device = _make_device(live_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
@@ -188,7 +193,7 @@ class TestBaseSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
-        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        device = _make_device(live_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
@@ -198,7 +203,7 @@ class TestBaseSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["serial_number"] == "1234567890"
 
     def test_no_status_keeps_default_device_info(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvEnergySensor(coordinator, device, "energy", "chargeEnergyTotal")
@@ -421,7 +426,7 @@ class TestConnectorSensorUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvConnectorSensor._update_device_info_from_status()."""
 
     def test_known_product_id_maps_to_the_marketed_model_name(self):
-        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
+        device = _make_device(live_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
@@ -429,7 +434,7 @@ class TestConnectorSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 99})
+        device = _make_device(live_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
@@ -437,7 +442,7 @@ class TestConnectorSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
-        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        device = _make_device(live_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
@@ -447,7 +452,7 @@ class TestConnectorSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["serial_number"] == "1234567890"
 
     def test_no_status_keeps_default_device_info(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvConnectorSensor(coordinator, device)
@@ -461,15 +466,15 @@ class TestConnectorSensorUpdateDeviceInfoFromStatus:
 class TestConnectorSensorAvailable:
     """Tests for AndersenEvConnectorSensor.available."""
 
-    def test_available_when_device_found_and_status_available(self):
-        device = _make_device(status_available=True)
+    def test_available_when_device_found_and_connected(self):
+        device = _make_device()
         coordinator = _make_coordinator([device], last_update_success=True)
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
         assert sensor.available is True
 
-    def test_unavailable_when_status_unavailable(self):
-        device = _make_device(status_available=False)
+    def test_unavailable_when_disconnected_too_long(self):
+        device = _make_device(disconnected_since=DISCONNECTED_LONG_AGO)
         coordinator = _make_coordinator([device], last_update_success=True)
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
@@ -506,29 +511,29 @@ class TestConnectorSensorNativeValue:
         ],
     )
     def test_maps_evse_state(self, evse_state, expected):
-        device = _make_device(last_status={"evseState": evse_state})
+        device = _make_device(live_status={"evseState": evse_state})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
         assert sensor.native_value == expected
 
     def test_no_status_returns_default_unknown(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
         assert sensor.native_value == "unknown"
 
     def test_no_evse_state_key_keeps_previous_state(self):
-        device = _make_device(last_status={"other": True})
+        device = _make_device(live_status={"other": True})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
         assert sensor.native_value == "unknown"
 
     def test_updates_device_reference_from_coordinator_data(self):
-        original_device = _make_device(device_id="device_1", last_status=None)
-        updated_device = _make_device(device_id="device_1", last_status={"evseState": "3"})
+        original_device = _make_device(device_id="device_1", live_status=None)
+        updated_device = _make_device(device_id="device_1", live_status={"evseState": "3"})
         coordinator = _make_coordinator([updated_device])
         sensor = AndersenEvConnectorSensor(coordinator, original_device)
 
@@ -536,7 +541,7 @@ class TestConnectorSensorNativeValue:
         assert sensor._device is updated_device
 
     def test_repeated_same_state_does_not_relog(self):
-        device = _make_device(last_status={"evseState": "3"})
+        device = _make_device(live_status={"evseState": "3"})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvConnectorSensor(coordinator, device)
 
@@ -544,42 +549,6 @@ class TestConnectorSensorNativeValue:
         second = sensor.native_value
 
         assert first == second == "Charging"
-
-
-class TestConnectorSensorAsyncUpdate:
-    """Tests for AndersenEvConnectorSensor.async_update()."""
-
-    @pytest.mark.asyncio
-    async def test_refreshes_from_api_and_updates_evse_state(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(return_value={"evseState": "2"})
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvConnectorSensor(coordinator, device)
-
-        await sensor.async_update()
-
-        device.get_detailed_device_status.assert_awaited_once()
-        assert sensor._last_evse_state == "2"
-
-    @pytest.mark.asyncio
-    async def test_no_evse_state_in_status_leaves_state_unchanged(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(return_value={"other": True})
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvConnectorSensor(coordinator, device)
-
-        await sensor.async_update()
-
-        assert sensor._last_evse_state is None
-
-    @pytest.mark.asyncio
-    async def test_exception_during_refresh_is_swallowed(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(side_effect=RuntimeError("boom"))
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvConnectorSensor(coordinator, device)
-
-        await sensor.async_update()
 
 
 class TestChargeStatusSensorInit:
@@ -616,7 +585,7 @@ class TestChargeStatusSensorUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvChargeStatusSensor._update_device_info_from_status()."""
 
     def test_known_product_id_maps_to_the_marketed_model_name(self):
-        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
+        device = _make_device(live_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
@@ -624,7 +593,7 @@ class TestChargeStatusSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 99})
+        device = _make_device(live_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
@@ -632,7 +601,7 @@ class TestChargeStatusSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
-        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        device = _make_device(live_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
@@ -642,7 +611,7 @@ class TestChargeStatusSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["serial_number"] == "1234567890"
 
     def test_no_status_keeps_default_device_info(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
@@ -654,32 +623,39 @@ class TestChargeStatusSensorUpdateDeviceInfoFromStatus:
 
 
 class TestChargeStatusSensorAvailable:
-    """Tests for AndersenEvChargeStatusSensor.available."""
+    """Tests for ChargeStatusSensor.available."""
 
-    def test_available_when_charge_status_present(self):
-        device = _make_device(last_status={"chargeStatus": {"chargePower": 1000}}, status_available=True)
-        coordinator = _make_coordinator([device], last_update_success=True)
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
+    @pytest.mark.parametrize(
+        "live_status",
+        [
+            pytest.param({"chargeStatus": {"chargePower": 1000}, "sysGridPower": 1.2}, id="with_value"),
+            pytest.param({"other": True}, id="value_missing"),
+            pytest.param(None, id="before_first_payload"),
+        ],
+    )
+    def test_available_while_connected(self, live_status):
+        """The value may be unknown, but the entity stays available while the subscription is up."""
+        device = _make_device(live_status=live_status)
+        sensor = AndersenEvChargeStatusSensor(_make_coordinator([device]), device, "charge_power", "chargePower")
 
         assert sensor.available is True
 
-    def test_unavailable_when_charge_status_missing(self):
-        device = _make_device(last_status={"other": True}, status_available=True)
-        coordinator = _make_coordinator([device], last_update_success=True)
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
+    @pytest.mark.parametrize(
+        ("disconnected_for", "available"),
+        [
+            pytest.param(timedelta(minutes=4), True, id="under_five_minutes"),
+            pytest.param(timedelta(minutes=6), False, id="over_five_minutes"),
+        ],
+    )
+    def test_unavailable_after_five_minutes_disconnected(self, disconnected_for, available):
+        device = _make_device(live_status={"sysGridPower": 1.2}, disconnected_since=dt_util.utcnow() - disconnected_for)
+        sensor = AndersenEvChargeStatusSensor(_make_coordinator([device]), device, "charge_power", "chargePower")
 
-        assert sensor.available is False
-
-    def test_unavailable_when_no_status(self):
-        device = _make_device(last_status=None, status_available=True)
-        coordinator = _make_coordinator([device], last_update_success=True)
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
-
-        assert sensor.available is False
+        assert sensor.available is available
 
     def test_unavailable_when_device_not_found(self):
         device = _make_device(device_id="device_1")
-        coordinator = _make_coordinator([], last_update_success=True)
+        coordinator = _make_coordinator([])
         sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
 
         assert sensor.available is False
@@ -689,7 +665,7 @@ class TestChargeStatusSensorNativeValue:
     """Tests for AndersenEvChargeStatusSensor.native_value."""
 
     def test_returns_value_from_charge_status(self):
-        device = _make_device(last_status={"chargeStatus": {"chargePower": 2500}})
+        device = _make_device(live_status={"chargeStatus": {"chargePower": 2500}})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -702,7 +678,7 @@ class TestChargeStatusSensorNativeValue:
         assert sensor.native_value == 2500
 
     def test_returns_none_when_data_key_missing(self):
-        device = _make_device(last_status={"chargeStatus": {}})
+        device = _make_device(live_status={"chargeStatus": {}})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -715,7 +691,7 @@ class TestChargeStatusSensorNativeValue:
         assert sensor.native_value is None
 
     def test_returns_none_when_charge_status_missing(self):
-        device = _make_device(last_status={"other": True})
+        device = _make_device(live_status={"other": True})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -728,7 +704,7 @@ class TestChargeStatusSensorNativeValue:
         assert sensor.native_value is None
 
     def test_returns_none_when_no_status(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -741,7 +717,7 @@ class TestChargeStatusSensorNativeValue:
         assert sensor.native_value is None
 
     def test_parses_valid_timestamp(self):
-        device = _make_device(last_status={"chargeStatus": {"start": "2024-02-19T10:30:00Z"}})
+        device = _make_device(live_status={"chargeStatus": {"start": "2024-02-19T10:30:00Z"}})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -758,7 +734,7 @@ class TestChargeStatusSensorNativeValue:
         assert value.day == 19
 
     def test_invalid_timestamp_returns_none(self):
-        device = _make_device(last_status={"chargeStatus": {"start": "not-a-real-timestamp!!"}})
+        device = _make_device(live_status={"chargeStatus": {"start": "not-a-real-timestamp!!"}})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -771,8 +747,8 @@ class TestChargeStatusSensorNativeValue:
         assert sensor.native_value is None
 
     def test_updates_device_reference_from_coordinator_data(self):
-        original_device = _make_device(device_id="device_1", last_status=None)
-        updated_device = _make_device(device_id="device_1", last_status={"chargeStatus": {"chargePower": 500}})
+        original_device = _make_device(device_id="device_1", live_status=None)
+        updated_device = _make_device(device_id="device_1", live_status={"chargeStatus": {"chargePower": 500}})
         coordinator = _make_coordinator([updated_device])
         sensor = AndersenEvChargeStatusSensor(
             coordinator,
@@ -815,31 +791,31 @@ class TestChargeStatusSensorLastReset:
 
     @pytest.mark.parametrize(("sensor_type", "data_key"), REALTIME_ENERGY_SENSORS)
     def test_energy_total_sensors_report_the_session_start(self, sensor_type, data_key):
-        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", data_key: 4.08}})
+        device = _make_device(live_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", data_key: 4.08}})
         sensor = _realtime_energy_sensor(device, sensor_type, data_key)
 
         assert sensor.last_reset == datetime(2026, 10, 2, 6, 12, 41, tzinfo=UTC)
         assert sensor.last_reset.tzinfo is not None
 
     def test_a_new_session_changes_last_reset(self):
-        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
+        device = _make_device(live_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
         sensor = _realtime_energy_sensor(device)
         first = sensor.last_reset
 
-        device.last_status = {"chargeStatus": {"start": "2026-10-03T00:30:05+01:00"}}
+        device.live_status = {"chargeStatus": {"start": "2026-10-03T00:30:05+01:00"}}
 
         assert sensor.last_reset != first
         assert sensor.last_reset == datetime(2026, 10, 2, 23, 30, 5, tzinfo=UTC)
 
     def test_same_session_keeps_last_reset_stable(self):
         device = _make_device(
-            last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargeEnergyTotal": 1}}
+            live_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargeEnergyTotal": 1}}
         )
         sensor = _realtime_energy_sensor(device)
         first = sensor.last_reset
         assert first is not None
 
-        device.last_status = {"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargeEnergyTotal": 2}}
+        device.live_status = {"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargeEnergyTotal": 2}}
 
         assert sensor.last_reset == first
 
@@ -848,7 +824,7 @@ class TestChargeStatusSensorLastReset:
 
         That is a genuine new cycle, so it passes through like any other start time.
         """
-        device = _make_device(last_status={"chargeStatus": {"start": "2000-01-01T01:00:21+01:00"}})
+        device = _make_device(live_status={"chargeStatus": {"start": "2000-01-01T01:00:21+01:00"}})
         sensor = _realtime_energy_sensor(device)
 
         assert sensor.last_reset == datetime(2000, 1, 1, 0, 0, 21, tzinfo=UTC)
@@ -857,7 +833,7 @@ class TestChargeStatusSensorLastReset:
         original_tz = dt_util.DEFAULT_TIME_ZONE
         dt_util.set_default_time_zone(dt_util.get_time_zone("America/New_York"))
         try:
-            device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41"}})
+            device = _make_device(live_status={"chargeStatus": {"start": "2026-10-02T07:12:41"}})
             sensor = _realtime_energy_sensor(device)
 
             last_reset = sensor.last_reset
@@ -870,7 +846,7 @@ class TestChargeStatusSensorLastReset:
 
     def test_power_sensor_has_no_last_reset(self):
         """Home Assistant rejects last_reset on anything but an energy total."""
-        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargePower": 7}})
+        device = _make_device(live_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00", "chargePower": 7}})
         sensor = AndersenEvChargeStatusSensor(
             _make_coordinator([device]),
             device,
@@ -884,7 +860,7 @@ class TestChargeStatusSensorLastReset:
         assert sensor.last_reset is None
 
     def test_session_start_sensor_has_no_last_reset(self):
-        device = _make_device(last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
+        device = _make_device(live_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
         sensor = AndersenEvChargeStatusSensor(
             _make_coordinator([device]), device, "session_start", "start", SensorDeviceClass.TIMESTAMP
         )
@@ -904,15 +880,15 @@ class TestChargeStatusSensorLastReset:
         ],
     )
     def test_returns_none_when_start_is_missing_or_unusable(self, last_status):
-        device = _make_device(last_status=last_status)
+        device = _make_device(live_status=last_status)
         sensor = _realtime_energy_sensor(device)
 
         assert sensor.last_reset is None
 
     def test_follows_the_coordinators_current_device(self):
         """The coordinator replaces device objects between refreshes, so a stale reference must not stick."""
-        stale = _make_device(device_id="device_1", last_status=None)
-        fresh = _make_device(device_id="device_1", last_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
+        stale = _make_device(device_id="device_1", live_status=None)
+        fresh = _make_device(device_id="device_1", live_status={"chargeStatus": {"start": "2026-10-02T07:12:41+01:00"}})
         sensor = AndersenEvChargeStatusSensor(
             _make_coordinator([fresh]),
             stale,
@@ -926,34 +902,11 @@ class TestChargeStatusSensorLastReset:
         assert sensor.last_reset == datetime(2026, 10, 2, 6, 12, 41, tzinfo=UTC)
 
 
-class TestChargeStatusSensorAsyncUpdate:
-    """Tests for AndersenEvChargeStatusSensor.async_update()."""
-
-    @pytest.mark.asyncio
-    async def test_refreshes_from_api(self):
-        device = _make_device()
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
-
-        await sensor.async_update()
-
-        device.get_detailed_device_status.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_exception_during_refresh_is_swallowed(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(side_effect=RuntimeError("boom"))
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvChargeStatusSensor(coordinator, device, "charge_power", "chargePower")
-
-        await sensor.async_update()
-
-
 class TestLiveSensorUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvLiveSensor._update_device_info_from_status()."""
 
     def test_known_product_id_maps_to_the_marketed_model_name(self):
-        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
+        device = _make_device(live_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
@@ -961,7 +914,7 @@ class TestLiveSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 99})
+        device = _make_device(live_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
@@ -969,7 +922,7 @@ class TestLiveSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
-        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        device = _make_device(live_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
@@ -979,7 +932,7 @@ class TestLiveSensorUpdateDeviceInfoFromStatus:
         assert sensor._attr_device_info["serial_number"] == "1234567890"
 
     def test_no_status_keeps_default_device_info(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
 
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
@@ -1057,32 +1010,39 @@ class TestLiveSensorInit:
 
 
 class TestLiveSensorAvailable:
-    """Tests for AndersenEvLiveSensor.available."""
+    """Tests for LiveSensor.available."""
 
-    def test_available_when_data_key_present(self):
-        device = _make_device(last_status={"sysGridPower": 1.2}, status_available=True)
-        coordinator = _make_coordinator([device], last_update_success=True)
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
+    @pytest.mark.parametrize(
+        "live_status",
+        [
+            pytest.param({"chargeStatus": {"chargePower": 1000}, "sysGridPower": 1.2}, id="with_value"),
+            pytest.param({"other": True}, id="value_missing"),
+            pytest.param(None, id="before_first_payload"),
+        ],
+    )
+    def test_available_while_connected(self, live_status):
+        """The value may be unknown, but the entity stays available while the subscription is up."""
+        device = _make_device(live_status=live_status)
+        sensor = AndersenEvLiveSensor(_make_coordinator([device]), device, "sys_grid_power", "sysGridPower")
 
         assert sensor.available is True
 
-    def test_unavailable_when_data_key_missing(self):
-        device = _make_device(last_status={"other": True}, status_available=True)
-        coordinator = _make_coordinator([device], last_update_success=True)
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
+    @pytest.mark.parametrize(
+        ("disconnected_for", "available"),
+        [
+            pytest.param(timedelta(minutes=4), True, id="under_five_minutes"),
+            pytest.param(timedelta(minutes=6), False, id="over_five_minutes"),
+        ],
+    )
+    def test_unavailable_after_five_minutes_disconnected(self, disconnected_for, available):
+        device = _make_device(live_status={"sysGridPower": 1.2}, disconnected_since=dt_util.utcnow() - disconnected_for)
+        sensor = AndersenEvLiveSensor(_make_coordinator([device]), device, "sys_grid_power", "sysGridPower")
 
-        assert sensor.available is False
-
-    def test_unavailable_when_no_status(self):
-        device = _make_device(last_status=None, status_available=True)
-        coordinator = _make_coordinator([device], last_update_success=True)
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
-
-        assert sensor.available is False
+        assert sensor.available is available
 
     def test_unavailable_when_device_not_found(self):
         device = _make_device(device_id="device_1")
-        coordinator = _make_coordinator([], last_update_success=True)
+        coordinator = _make_coordinator([])
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
         assert sensor.available is False
@@ -1091,29 +1051,29 @@ class TestLiveSensorAvailable:
 class TestLiveSensorNativeValue:
     """Tests for AndersenEvLiveSensor.native_value."""
 
-    def test_returns_value_from_last_status(self):
-        device = _make_device(last_status={"sysGridPower": 1.5})
+    def test_returns_value_from_live_status(self):
+        device = _make_device(live_status={"sysGridPower": 1.5})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
         assert sensor.native_value == 1.5
 
     def test_returns_none_when_data_key_missing(self):
-        device = _make_device(last_status={"other": True})
+        device = _make_device(live_status={"other": True})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
         assert sensor.native_value is None
 
     def test_returns_none_when_no_status(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
         sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
 
         assert sensor.native_value is None
 
     def test_parses_valid_timestamp(self):
-        device = _make_device(last_status={"lastSeen": "2024-02-19T10:30:00Z"})
+        device = _make_device(live_status={"lastSeen": "2024-02-19T10:30:00Z"})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvLiveSensor(
             coordinator, device, "last_seen", "lastSeen", device_class=SensorDeviceClass.TIMESTAMP
@@ -1124,7 +1084,7 @@ class TestLiveSensorNativeValue:
         assert value.year == 2024
 
     def test_invalid_timestamp_returns_none(self):
-        device = _make_device(last_status={"lastSeen": "definitely-not-a-timestamp!!"})
+        device = _make_device(live_status={"lastSeen": "definitely-not-a-timestamp!!"})
         coordinator = _make_coordinator([device])
         sensor = AndersenEvLiveSensor(
             coordinator, device, "last_seen", "lastSeen", device_class=SensorDeviceClass.TIMESTAMP
@@ -1133,36 +1093,13 @@ class TestLiveSensorNativeValue:
         assert sensor.native_value is None
 
     def test_updates_device_reference_from_coordinator_data(self):
-        original_device = _make_device(device_id="device_1", last_status=None)
-        updated_device = _make_device(device_id="device_1", last_status={"sysGridPower": 3.3})
+        original_device = _make_device(device_id="device_1", live_status=None)
+        updated_device = _make_device(device_id="device_1", live_status={"sysGridPower": 3.3})
         coordinator = _make_coordinator([updated_device])
         sensor = AndersenEvLiveSensor(coordinator, original_device, "sys_grid_power", "sysGridPower")
 
         assert sensor.native_value == 3.3
         assert sensor._device is updated_device
-
-
-class TestLiveSensorAsyncUpdate:
-    """Tests for AndersenEvLiveSensor.async_update()."""
-
-    @pytest.mark.asyncio
-    async def test_refreshes_from_api(self):
-        device = _make_device()
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
-
-        await sensor.async_update()
-
-        device.get_detailed_device_status.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_exception_during_refresh_is_swallowed(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(side_effect=RuntimeError("boom"))
-        coordinator = _make_coordinator([device])
-        sensor = AndersenEvLiveSensor(coordinator, device, "sys_grid_power", "sysGridPower")
-
-        await sensor.async_update()
 
 
 class TestBuildEntitiesForDeviceEntityCategories:
@@ -1222,3 +1159,38 @@ class TestEnergySensorUnitConstants:
         assert sensor._attr_native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
         assert sensor._attr_device_class == SensorDeviceClass.ENERGY
         assert sensor._attr_state_class == SensorStateClass.TOTAL
+
+
+class TestSolarPowerSensor:
+    """Tests for AndersenEvSolarPowerSensor."""
+
+    @pytest.mark.parametrize(
+        ("live_status", "expected"),
+        [
+            pytest.param({"sysSolarCT": True, "sysSolarPower": 1.234}, 1234.0, id="solar_ct_fitted"),
+            pytest.param({"sysSolarCT": False, "sysSolarPower": 0.005465}, None, id="no_solar_ct_stale_value"),
+            pytest.param({"sysSolarCT": True, "sysSolarPower": None}, None, id="no_reading"),
+            pytest.param({}, None, id="before_first_payload"),
+        ],
+    )
+    def test_native_value_in_watts(self, live_status, expected):
+        device = _make_device(live_status=live_status)
+        sensor = AndersenEvSolarPowerSensor(_make_coordinator([device]), device)
+
+        assert sensor.native_value == expected
+        assert sensor.native_unit_of_measurement == UnitOfPower.WATT
+        assert sensor.unique_id == "device_1_solar_power"
+
+    @pytest.mark.parametrize(
+        ("live_status", "enabled"),
+        [
+            pytest.param({"sysSolarCT": True}, True, id="solar_ct_fitted"),
+            pytest.param({"sysSolarCT": False}, False, id="no_solar_ct"),
+            pytest.param({}, False, id="unknown"),
+        ],
+    )
+    def test_enabled_by_default_only_with_solar_ct(self, live_status, enabled):
+        device = _make_device(live_status=live_status)
+        sensor = AndersenEvSolarPowerSensor(_make_coordinator([device]), device)
+
+        assert sensor.entity_registry_enabled_default is enabled

@@ -5,9 +5,16 @@ from __future__ import annotations
 from typing import cast
 
 from homeassistant.helpers.entity import ChildDeviceInfo, DeviceInfo
+from homeassistant.util import dt as dt_util
 
-from .const import PRODUCT_NAMES
+from .const import LIVE_STATUS_TIMEOUT, PRODUCT_NAMES
 from .konnect.device import KonnectDevice
+
+
+def live_status_available(device: KonnectDevice) -> bool:
+    """Return False once the device's subscription has been disconnected for LIVE_STATUS_TIMEOUT."""
+    since = device.subscription_disconnected_since
+    return since is None or dt_util.utcnow() - since < LIVE_STATUS_TIMEOUT
 
 
 class AndersenEvDeviceInfoMixin:
@@ -37,7 +44,7 @@ class AndersenEvDeviceInfoMixin:
         """Update model, hardware/firmware version and serial number from device status."""
         assert self._attr_device_info is not None, "_attr_device_info must be set before this call"
         device_info = cast(DeviceInfo, self._attr_device_info)
-        status = self._device.last_status
+        status = self._device.live_status
         if not status:
             return
         product_id = self._text(status.get("sysProductId"))

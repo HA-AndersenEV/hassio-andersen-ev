@@ -2,16 +2,25 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator
-from typing import Any
+from collections.abc import AsyncGenerator, Generator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from andersen_ev import AndersenEvCoordinator
-from andersen_ev.const import SUBSCRIPTION_RETRY_MAX, SUBSCRIPTION_RETRY_MIN
+from andersen_ev.const import LIVE_STATUS_TIMEOUT, SUBSCRIPTION_RETRY_MAX, SUBSCRIPTION_RETRY_MIN
 from andersen_ev.konnect.device import KonnectDevice
 from andersen_ev.konnect.exceptions import AndersenAuthError, AndersenSubscriptionError
+
+
+@pytest.fixture(autouse=True)
+def call_later() -> Generator[MagicMock]:
+    """Stand in for async_call_later, which needs a running Home Assistant."""
+    with patch("andersen_ev.async_call_later") as call_later:
+        call_later.side_effect = lambda _hass, _delay, _action: MagicMock()
+        yield call_later
+
 
 INITIAL = {"id": "test_device_123", "evseState": 1, "chargeStatus": {"chargePower": 0, "duration": 10}}
 
@@ -26,6 +35,8 @@ class _Harness:
         self.coordinator.devices = []
         self.coordinator._subscription_tasks = {}
         self.coordinator._subscription_failing = set()
+        self.coordinator._live_status_received = {}
+        self.coordinator._live_timeout_unsubs = {}
         self.coordinator.hass = MagicMock()
         self.coordinator.config_entry = self.entry
         setattr(self.coordinator, "async_update_listeners", self.listeners)
@@ -249,3 +260,101 @@ async def test_stop_subscriptions_cancels_and_waits() -> None:
 
     assert task.cancelled()
     assert coordinator._subscription_tasks == {}
+
+
+def test_payload_feeds_solar_status(mock_device: KonnectDevice) -> None:
+    """Solar switches and grid source power read the solar cache, which follows the live status."""
+    harness = _Harness()
+
+    harness.coordinator._handle_subscription_payload(
+        mock_device,
+        {
+            "solarOverride": True,
+            "solarChargeAlways": True,
+            "solarMaxGridChargePercent": 40,
+            "chargeOutsideSchedules": False,
+        },
+    )
+
+    assert mock_device.last_solar_status == {
+        "boost": True,
+        "solarChargeAlways": True,
+        "solarMaxGridChargePercent": 40,
+        "solarChargeOutsideSchedules": False,
+    }
+
+
+async def test_live_timeout_refreshes_entities_after_five_minutes(
+    mock_device: KonnectDevice, call_later: MagicMock
+) -> None:
+    """Losing the subscription schedules a listener update at the five-minute mark, so entities go unavailable."""
+    harness = _Harness()
+    _attach_subscription(mock_device, _connection(AndersenSubscriptionError("down")))
+
+    await _run_until_sleeps(harness.coordinator, mock_device, 1)
+
+    call_later.assert_called_once()
+    assert call_later.call_args.args[1] == LIVE_STATUS_TIMEOUT.total_seconds()
+    call_later.call_args.args[2](None)
+    harness.listeners.assert_called_once()
+    assert harness.coordinator._live_timeout_unsubs == {}
+
+
+def test_live_timeout_cancelled_when_payload_arrives(mock_device: KonnectDevice, call_later: MagicMock) -> None:
+    """A payload after a loss cancels the pending timeout."""
+    harness = _Harness()
+    harness.coordinator._mark_subscription_lost(mock_device, "down", 5)
+    unsub = cast(MagicMock, harness.coordinator._live_timeout_unsubs[mock_device.device_id])
+
+    harness.coordinator._handle_subscription_payload(mock_device, INITIAL)
+
+    unsub.assert_called_once()
+    assert harness.coordinator._live_timeout_unsubs == {}
+
+
+async def test_stop_subscriptions_cancels_live_timeouts(mock_device: KonnectDevice) -> None:
+    """Unloading cancels pending timeouts."""
+    harness = _Harness()
+    harness.coordinator._mark_subscription_lost(mock_device, "down", 5)
+    unsub = cast(MagicMock, harness.coordinator._live_timeout_unsubs[mock_device.device_id])
+
+    await harness.coordinator.async_stop_subscriptions()
+
+    unsub.assert_called_once()
+    assert harness.coordinator._live_timeout_unsubs == {}
+
+
+async def test_wait_for_live_status_returns_after_first_payload(mock_device: KonnectDevice) -> None:
+    """Setup continues as soon as every device has had a payload."""
+    harness = _Harness()
+    harness.coordinator.devices = [mock_device]
+    asyncio.get_running_loop().call_soon(harness.coordinator._handle_subscription_payload, mock_device, INITIAL)
+
+    await asyncio.wait_for(harness.coordinator.async_wait_for_live_status(10), 1)
+
+    assert mock_device.last_subscription_status == INITIAL
+
+
+async def test_wait_for_live_status_times_out_quietly(
+    mock_device: KonnectDevice, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without a payload, setup carries on after the timeout instead of failing."""
+    harness = _Harness()
+    harness.coordinator.devices = [mock_device]
+    caplog.set_level(logging.DEBUG, logger="andersen_ev")
+
+    await harness.coordinator.async_wait_for_live_status(0.01)
+
+    assert "No live status for every device" in caplog.text
+
+
+def test_rescheduling_live_timeout_cancels_the_previous_one(mock_device: KonnectDevice) -> None:
+    """A new subscription loop for the same device replaces its pending timeout rather than adding another."""
+    harness = _Harness()
+    harness.coordinator._schedule_live_timeout(mock_device)
+    first = cast(MagicMock, harness.coordinator._live_timeout_unsubs[mock_device.device_id])
+
+    harness.coordinator._schedule_live_timeout(mock_device)
+
+    first.assert_called_once()
+    assert harness.coordinator._live_timeout_unsubs[mock_device.device_id] is not first

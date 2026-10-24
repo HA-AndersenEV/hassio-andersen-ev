@@ -25,7 +25,7 @@ from homeassistant.util import dt as dt_util
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
-from .entity import AndersenEvDeviceInfoMixin
+from .entity import AndersenEvDeviceInfoMixin, live_status_available
 
 PARALLEL_UPDATES = 0
 
@@ -238,28 +238,7 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
             UnitOfPower.KILO_WATT,
         )
     )
-    entities.append(
-        AndersenEvChargeStatusSensor(
-            coordinator,
-            device,
-            "solar_power",
-            "solarPower",
-            SensorDeviceClass.POWER,
-            SensorStateClass.MEASUREMENT,
-            UnitOfPower.WATT,
-        )
-    )
-    entities.append(
-        AndersenEvChargeStatusSensor(
-            coordinator,
-            device,
-            "grid_power",
-            "gridPower",
-            SensorDeviceClass.POWER,
-            SensorStateClass.MEASUREMENT,
-            UnitOfPower.WATT,
-        )
-    )
+    entities.append(AndersenEvSolarPowerSensor(coordinator, device))
 
     # Realtime charge status sensors - energy
     entities.append(
@@ -444,11 +423,10 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
     @property
     def available(self) -> bool:
         """Return if the sensor is available."""
-        # Always available if the coordinator and device are available
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     @property
@@ -460,9 +438,8 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
                 self._device = device
                 break
 
-        # Check if the device has status information
-        if self._device.last_status:
-            status = self._device.last_status
+        status = self._device.live_status
+        if status:
             if "evseState" in status:
                 evse_state = status["evseState"]
 
@@ -495,28 +472,6 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
                     self._connector_state = "unknown"
 
         return self._connector_state
-
-    async def async_update(self) -> None:
-        """Update the entity with latest status from coordinator."""
-        await super().async_update()
-
-        # Force refresh of device status to get the latest evseState
-        try:
-            # Update model if device status is available
-            self._update_device_info_from_status()
-
-            # This will make the connector sensor more responsive
-            # by getting the most up-to-date status directly from the API
-            status = await self._device.get_detailed_device_status()
-            if status and "evseState" in status:
-                evse_state = status["evseState"]
-                if self._last_evse_state != evse_state:
-                    _LOGGER.debug(
-                        "Direct API call: EVSE state changed to %s for %s", evse_state, self._device.friendly_name
-                    )
-                    self._last_evse_state = evse_state
-        except Exception as err:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            _LOGGER.debug("Error updating connector state: %s", err)
 
 
 class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SensorEntity):
@@ -558,13 +513,10 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
     @property
     def available(self) -> bool:
         """Return if the sensor is available."""
-        # Always available if the coordinator and device are available
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                # Check if chargeStatus exists in last_status
-                if self._device.last_status and "chargeStatus" in self._device.last_status:
-                    return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     @property
@@ -576,13 +528,9 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
                 self._device = device
                 break
 
-        # Check if the device has charge status information
-        if (
-            self._device.last_status
-            and "chargeStatus" in self._device.last_status
-            and self._data_key in self._device.last_status["chargeStatus"]
-        ):
-            value = self._device.last_status["chargeStatus"][self._data_key]
+        charge_status = self._device.live_status.get("chargeStatus") or {}
+        if self._data_key in charge_status:
+            value = charge_status[self._data_key]
             if self._attr_device_class == SensorDeviceClass.TIMESTAMP and isinstance(value, str):
                 try:
                     return dateutil.parser.isoparse(value)
@@ -607,25 +555,7 @@ class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[
             if device.device_id == self._device.device_id:
                 self._device = device
                 break
-        status = self._device.last_status
-        if not status:
-            return None
-        return _session_start_as_local((status.get("chargeStatus") or {}).get("start"))
-
-    async def async_update(self) -> None:
-        """Update the entity with latest status from coordinator."""
-        await super().async_update()
-
-        # Force refresh of device status to get the latest data
-        try:
-            # Update model if device status is available
-            self._update_device_info_from_status()
-
-            # This will make the sensors more responsive
-            # by getting the most up-to-date status directly from the API
-            await self._device.get_detailed_device_status()
-        except Exception as err:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            _LOGGER.debug("Error updating charge status sensor: %s", err)
+        return _session_start_as_local((self._device.live_status.get("chargeStatus") or {}).get("start"))
 
 
 class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SensorEntity):
@@ -672,12 +602,10 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
     @property
     def available(self) -> bool:
         """Return if the sensor is available."""
-        # Always available if the coordinator and device are available
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                if self._device.last_status and self._data_key in self._device.last_status:
-                    return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     @property
@@ -689,9 +617,9 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
                 self._device = device
                 break
 
-        # Check if the device has charge status information
-        if self._device.last_status and self._data_key in self._device.last_status:
-            value = self._device.last_status[self._data_key]
+        status = self._device.live_status
+        if self._data_key in status:
+            value = status[self._data_key]
             if (
                 hasattr(self, "_attr_device_class")
                 and self._attr_device_class == SensorDeviceClass.TIMESTAMP
@@ -705,17 +633,28 @@ class AndersenEvLiveSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[Andersen
             return value
         return None
 
-    async def async_update(self) -> None:
-        """Update the entity with latest status from coordinator."""
-        await super().async_update()
 
-        # Force refresh of device status to get the latest data
-        try:
-            # Update model if device status is available
-            self._update_device_info_from_status()
+class AndersenEvSolarPowerSensor(AndersenEvLiveSensor):
+    """Solar power from the charger's solar CT clamp, in W."""
 
-            # This will make the sensors more responsive
-            # by getting the most up-to-date status directly from the API
-            await self._device.get_detailed_device_status()
-        except Exception as err:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            _LOGGER.debug("Error updating live detailed status sensor: %s", err)
+    def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator,
+            device,
+            "solar_power",
+            "sysSolarPower",
+            SensorDeviceClass.POWER,
+            SensorStateClass.MEASUREMENT,
+            UnitOfPower.WATT,
+            # Only decided when the entity is first registered; existing users keep their setting.
+            enabled_default=bool(device.live_status.get("sysSolarCT")),
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the solar power, or None when no solar CT is fitted (the reading is then stale)."""
+        status = self._device.live_status
+        if not status.get("sysSolarCT") or (kilowatts := status.get("sysSolarPower")) is None:
+            return None
+        return round(kilowatts * 1000, 1)

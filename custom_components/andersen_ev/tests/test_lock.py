@@ -1,12 +1,17 @@
 """Tests for the Andersen EV lock platform."""
 
 import logging
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from andersen_ev.lock import COMMAND_CONFIRM_TIMEOUT, AndersenEvLock, async_setup_entry
+
+# Disconnected for longer than LIVE_STATUS_TIMEOUT, so live entities are unavailable.
+DISCONNECTED_LONG_AGO = dt_util.utcnow() - timedelta(minutes=6)
 
 
 def _make_device(
@@ -14,15 +19,15 @@ def _make_device(
     friendly_name="Device",
     user_lock=False,
     status_available=True,
-    last_status=None,
+    live_status=None,
 ):
     """Build a mock KonnectDevice."""
     device = MagicMock()
     device.device_id = device_id
     device.friendly_name = friendly_name
     device.user_lock = user_lock
-    device.status_available = status_available
-    device.last_status = last_status
+    device.subscription_disconnected_since = None if status_available else DISCONNECTED_LONG_AGO
+    device.live_status = live_status or {}
     device.disable = AsyncMock(return_value=True)
     device.enable = AsyncMock(return_value=True)
     return device
@@ -158,7 +163,7 @@ class TestUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvLock._update_device_info_from_status()."""
 
     def test_known_product_id_maps_to_the_marketed_model_name(self):
-        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
+        device = _make_device(live_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
@@ -166,7 +171,7 @@ class TestUpdateDeviceInfoFromStatus:
         assert lock._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 99})
+        device = _make_device(live_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
@@ -174,7 +179,7 @@ class TestUpdateDeviceInfoFromStatus:
         assert lock._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
-        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        device = _make_device(live_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
@@ -184,7 +189,7 @@ class TestUpdateDeviceInfoFromStatus:
         assert lock._attr_device_info["serial_number"] == "1234567890"
 
     def test_no_status_keeps_default_device_info(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
 
         lock = AndersenEvLock(coordinator, device)
@@ -212,12 +217,13 @@ class TestAvailable:
 
         assert lock.available is False
 
-    def test_unavailable_when_coordinator_update_failed(self):
+    def test_available_when_polling_fails(self):
+        """The lock follows the live status, so a failed poll doesn't make it unavailable."""
         device = _make_device(status_available=True)
         coordinator = _make_coordinator([device], last_update_success=False)
         lock = AndersenEvLock(coordinator, device)
 
-        assert lock.available is False
+        assert lock.available is True
 
     def test_unavailable_when_device_not_found(self):
         device = _make_device(device_id="device_1")
@@ -231,14 +237,14 @@ class TestIsLocked:
     """Tests for AndersenEvLock.is_locked."""
 
     def test_returns_sys_user_lock_true(self):
-        device = _make_device(last_status={"sysUserLock": True})
+        device = _make_device(live_status={"sysUserLock": True})
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
 
         assert lock.is_locked is True
 
     def test_returns_sys_user_lock_false(self):
-        device = _make_device(last_status={"sysUserLock": False})
+        device = _make_device(live_status={"sysUserLock": False})
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
 
@@ -246,14 +252,14 @@ class TestIsLocked:
 
     def test_unknown_when_no_status(self):
         """The getDevices userLock flag disagrees with status on real chargers, so don't guess from it."""
-        device = _make_device(last_status=None, user_lock=True)
+        device = _make_device(live_status=None, user_lock=True)
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
 
         assert lock.is_locked is None
 
     def test_unknown_when_key_missing(self):
-        device = _make_device(last_status={"other": 1}, user_lock=True)
+        device = _make_device(live_status={"other": 1}, user_lock=True)
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
 
@@ -266,27 +272,12 @@ class TestIsLocked:
 
         assert lock.is_locked is False
 
-    def test_exception_reading_status_is_unknown(self):
-        class RaisingStatus:
-            def __contains__(self, item):
-                raise RuntimeError("boom")
-
-            def __bool__(self):
-                return True
-
-        device = _make_device(last_status=None, user_lock=False)
-        coordinator = _make_coordinator([device])
-        lock = AndersenEvLock(coordinator, device)
-        lock._device.last_status = RaisingStatus()
-
-        assert lock.is_locked is None
-
 
 class TestAsyncLock:
     """Tests for AndersenEvLock.async_lock()."""
 
     @pytest.mark.asyncio
-    async def test_success_requests_refresh(self):
+    async def test_success_does_not_request_refresh(self):
         device = _make_device()
         device.disable = AsyncMock(return_value=True)
         coordinator = _make_coordinator([device])
@@ -296,7 +287,8 @@ class TestAsyncLock:
         await lock.async_lock()
 
         device.disable.assert_awaited_once()
-        coordinator.async_request_refresh.assert_awaited_once()
+        coordinator.async_request_refresh.assert_not_awaited()
+        lock.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_failure_raises_home_assistant_error(self):
@@ -315,7 +307,7 @@ class TestAsyncUnlock:
     """Tests for AndersenEvLock.async_unlock()."""
 
     @pytest.mark.asyncio
-    async def test_success_requests_refresh(self):
+    async def test_success_does_not_request_refresh(self):
         device = _make_device()
         device.enable = AsyncMock(return_value=True)
         coordinator = _make_coordinator([device])
@@ -325,7 +317,8 @@ class TestAsyncUnlock:
         await lock.async_unlock()
 
         device.enable.assert_awaited_once()
-        coordinator.async_request_refresh.assert_awaited_once()
+        coordinator.async_request_refresh.assert_not_awaited()
+        lock.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_failure_raises_home_assistant_error(self):
@@ -345,7 +338,7 @@ class TestPendingCommand:
 
     @staticmethod
     def _make_lock(user_lock_status):
-        device = _make_device(last_status={"sysUserLock": user_lock_status})
+        device = _make_device(live_status={"sysUserLock": user_lock_status})
         coordinator = _make_coordinator([device])
         lock = AndersenEvLock(coordinator, device)
         lock.async_write_ha_state = MagicMock()
@@ -368,7 +361,7 @@ class TestPendingCommand:
         assert lock.is_locking is False
         assert lock.is_locked is True  # still the charger's real, unconfirmed state
 
-        device.last_status = {"sysUserLock": False}
+        device.live_status = {"sysUserLock": False}
 
         assert lock.is_unlocking is False
         assert lock.is_locked is False
@@ -383,7 +376,7 @@ class TestPendingCommand:
         assert lock.is_unlocking is False
         assert lock.is_locked is False
 
-        device.last_status = {"sysUserLock": True}
+        device.live_status = {"sysUserLock": True}
 
         assert lock.is_locking is False
         assert lock.is_locked is True
@@ -460,7 +453,7 @@ class TestPendingCommand:
         lock, device, _ = self._make_lock(True)
         await lock.async_unlock()
 
-        device.last_status = None
+        device.live_status = {}
 
         assert lock.is_unlocking is True
         assert lock.is_locked is None
@@ -474,7 +467,7 @@ class TestPendingCommand:
         await lock.async_unlock()
         assert lock.state == "unlocking"
 
-        device.last_status = {"sysUserLock": False}
+        device.live_status = {"sysUserLock": False}
         assert lock.state == "unlocked"
 
         await lock.async_lock()
@@ -484,7 +477,7 @@ class TestPendingCommand:
         assert lock.state == "unlocked"  # unconfirmed lock reverts to what the charger reports
 
     def test_rendered_state_is_unknown_when_charger_has_not_reported(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         lock = AndersenEvLock(_make_coordinator([device]), device)
 
         assert lock.state is None

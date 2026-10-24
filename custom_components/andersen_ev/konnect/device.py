@@ -72,27 +72,20 @@ class KonnectDevice:
         """Return the last known solar status."""
         return self._last_solar_status or {}
 
-    def update_solar_status_cache(self, changes: dict[str, Any]) -> None:
-        """Merge locally applied solar changes into the cached solar status."""
-        if self._last_solar_status is None:
-            self._last_solar_status = {}
-        self._last_solar_status.update(changes)
-
     @property
     def last_rest_status(self) -> dict[str, Any]:
         """Return the status object from the last REST getDevice call."""
         return (self._last_user_device or {}).get("status") or {}
 
-    def update_rest_status_cache(self, changes: dict[str, Any]) -> None:
-        """Merge locally applied changes into the cached REST status."""
-        if self._last_user_device is None:
-            self._last_user_device = {}
-        self._last_user_device.setdefault("status", {}).update(changes)
-
     async def get_user_device(self) -> dict[str, Any]:
         """Fetch and cache the REST getDevice userDevice object."""
         self._last_user_device = await self.api.getDevice(self.device_id)
         return self._last_user_device
+
+    @property
+    def live_status(self) -> dict[str, Any]:
+        """Return the merged subscription status, empty before the first payload."""
+        return self._last_subscription_status or {}
 
     @property
     def last_subscription_status(self) -> dict[str, Any] | None:
@@ -492,13 +485,12 @@ class KonnectDevice:
 
     def update_solar_status_from_device_status(self, status: dict[str, Any]) -> dict[str, Any]:
         """Populate the solar settings cache from an already-fetched device status."""
-        # The API only exposes this as sysScheduleLock, which is the inverse of "charge outside schedule".
-        schedule_lock = status.get("sysScheduleLock")
         self._last_solar_status = {
             "boost": status.get("solarOverride"),
             "solarChargeAlways": status.get("solarChargeAlways"),
             "solarMaxGridChargePercent": status.get("solarMaxGridChargePercent"),
-            "solarChargeOutsideSchedules": None if schedule_lock is None else not schedule_lock,
+            # Not sysScheduleLock: that also drops while a Charge now session overrides a schedule.
+            "solarChargeOutsideSchedules": status.get("chargeOutsideSchedules"),
         }
         self._remember_grid_charge_percent(status.get("solarMaxGridChargePercent"))
         return self._last_solar_status
@@ -520,12 +512,14 @@ class KonnectDevice:
         Only the provided (non-None) parameters are sent to the API.
         """
         _LOGGER.debug(
-            "Setting solar options for device %s (%s): boost=%s, charge_always=%s, max_grid_charge_percent=%s",
+            "Setting solar options for device %s (%s): boost=%s, charge_always=%s, max_grid_charge_percent=%s, "
+            "charge_outside_schedules=%s",
             self.device_id,
             self.friendly_name,
             boost,
             charge_always,
             max_grid_charge_percent,
+            charge_outside_schedules,
         )
 
         fields: dict[str, object] = {}

@@ -7,10 +7,12 @@ from datetime import timedelta
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -18,6 +20,8 @@ from .const import (
     ATTR_DEVICE_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    LIVE_STATUS_SETUP_TIMEOUT,
+    LIVE_STATUS_TIMEOUT,
     SERVICE_DISABLE_ALL_SCHEDULES,
     SERVICE_GET_DEVICE_INFO,
     SERVICE_GET_DEVICE_STATUS,
@@ -55,6 +59,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
     coordinator.async_start_subscriptions()
     # Picks up devices added to, or removed from, the account after setup.
     entry.async_on_unload(coordinator.async_add_listener(coordinator.async_start_subscriptions))
+    # Entities read the subscription, and some (e.g. whether solar power is enabled) are decided from
+    # its first payload, so give it a moment to arrive before creating them.
+    await coordinator.async_wait_for_live_status(LIVE_STATUS_SETUP_TIMEOUT)
+    _remove_retired_entities(hass, coordinator)
 
     # Register services
     async def disable_all_schedules(call: ServiceCall) -> None:
@@ -65,7 +73,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
         for device in devices:
             if device.device_id == device_id:
                 await device.disable_all_schedules()
-                await coordinator.async_request_refresh()
                 break
         else:
             raise HomeAssistantError(
@@ -127,7 +134,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
         for device in devices:
             if device.device_id == device_id:
                 await device.reset_rcm()
-                await coordinator.async_request_refresh()
                 break
         else:
             raise HomeAssistantError(
@@ -200,15 +206,8 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         self._rest_failing: set[str] = set()
         self._subscription_tasks: dict[str, asyncio.Task[None]] = {}
         self._subscription_failing: set[str] = set()
-
-    async def async_request_refresh(self) -> None:
-        """Request a data refresh after a short delay.
-
-        The Andersen API needs a moment to apply changes before the
-        updated state is available, so we wait briefly before fetching.
-        """
-        await asyncio.sleep(3)
-        await super().async_request_refresh()
+        self._live_status_received: dict[str, asyncio.Event] = {}
+        self._live_timeout_unsubs: dict[str, CALLBACK_TYPE] = {}
 
     async def _async_update_data(self) -> list[KonnectDevice]:
         """Fetch data from API endpoint."""
@@ -275,7 +274,6 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 self._mark_device_unavailable(device, "no status returned")
                 continue
 
-            device.update_solar_status_from_device_status(status)
             device.status_available = True
             if self._device_availability.get(device.device_id) is False:
                 _LOGGER.info("Device %s is back online", device.friendly_name)
@@ -311,12 +309,28 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         self._subscription_tasks.clear()
         for task in tasks:
             task.cancel()
+        for unsub in self._live_timeout_unsubs.values():
+            unsub()
+        self._live_timeout_unsubs.clear()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def async_wait_for_live_status(self, timeout: float) -> None:
+        """Wait until every device has had a subscription payload, or the timeout passes."""
+        events = [self._live_status_event(device.device_id) for device in self.devices]
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(*(event.wait() for event in events))
+        except TimeoutError:
+            _LOGGER.debug("No live status for every device within %s s, continuing setup", timeout)
+
+    def _live_status_event(self, device_id: str) -> asyncio.Event:
+        return self._live_status_received.setdefault(device_id, asyncio.Event())
 
     async def _async_run_subscription(self, device: KonnectDevice) -> None:
         """Keep a device's live status subscription open, resubscribing with backoff after failures."""
         retry_delay = SUBSCRIPTION_RETRY_MIN
         device.subscription_disconnected_since = dt_util.utcnow()
+        self._schedule_live_timeout(device)
         try:
             while True:
                 reason: object = "the server ended the subscription"
@@ -347,6 +361,8 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         if not device.subscription_connected:
             device.subscription_connected = True
             device.subscription_disconnected_since = None
+            if unsub := self._live_timeout_unsubs.pop(device.device_id, None):
+                unsub()
             if device.device_id in self._subscription_failing:
                 self._subscription_failing.discard(device.device_id)
                 _LOGGER.info("Live status subscription for %s restored", device.friendly_name)
@@ -358,7 +374,9 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 device.friendly_name,
                 ", ".join(f"{field} {old!r} -> {new!r}" for field, (old, new) in changes.items()),
             )
+        self._live_status_event(device.device_id).set()
         if changes:
+            device.update_solar_status_from_device_status(device.live_status)
             self.async_update_listeners()
 
     def _mark_subscription_lost(self, device: KonnectDevice, reason: object, retry_delay: int) -> None:
@@ -366,6 +384,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         device.subscription_connected = False
         if device.subscription_disconnected_since is None:
             device.subscription_disconnected_since = dt_util.utcnow()
+            self._schedule_live_timeout(device)
         if device.device_id in self._subscription_failing:
             _LOGGER.debug(
                 "Live status subscription for %s still unavailable (%s), retrying in %s s",
@@ -380,6 +399,20 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
             device.friendly_name,
             reason,
             retry_delay,
+        )
+
+    def _schedule_live_timeout(self, device: KonnectDevice) -> None:
+        """Refresh entities once the device has been disconnected for LIVE_STATUS_TIMEOUT, so they go unavailable."""
+        if unsub := self._live_timeout_unsubs.pop(device.device_id, None):
+            unsub()
+
+        @callback
+        def _timed_out(_now: object) -> None:
+            self._live_timeout_unsubs.pop(device.device_id, None)
+            self.async_update_listeners()
+
+        self._live_timeout_unsubs[device.device_id] = async_call_later(
+            self.hass, LIVE_STATUS_TIMEOUT.total_seconds(), _timed_out
         )
 
     async def _update_user_device(self, device: KonnectDevice) -> None:
@@ -405,6 +438,15 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         else:
             _LOGGER.debug("Device %s still unavailable: %s", device.friendly_name, error)
         self._device_availability[device.device_id] = False
+
+
+def _remove_retired_entities(hass: HomeAssistant, coordinator: AndersenEvCoordinator) -> None:
+    """Remove registry entries for entities the integration no longer creates."""
+    entity_registry = er.async_get(hass)
+    for device in coordinator.devices:
+        # grid_power duplicated system_grid_power and its source field is always null.
+        if entity_id := entity_registry.async_get_entity_id("sensor", DOMAIN, f"{device.device_id}_grid_power"):
+            entity_registry.async_remove(entity_id)
 
 
 def _make_stale_device_listener(hass: HomeAssistant, coordinator: AndersenEvCoordinator):

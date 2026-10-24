@@ -15,14 +15,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
-from .entity import AndersenEvDeviceInfoMixin
+from .entity import AndersenEvDeviceInfoMixin, live_status_available
 
 PARALLEL_UPDATES = 1
 
 # How long a sent command may show as locking/unlocking before it is treated as unconfirmed.
-# The charger reports in about every 90s and the coordinator polls every 60s, and on the real
-# charger a command has taken anywhere from about 1 to 2.5 minutes to be confirmed, so this leaves
-# generous headroom: expiring early would show the old state while the command is still on its way.
+# The live status subscription usually confirms a command within a few seconds, but a command has
+# taken up to 2.5 minutes, so this leaves generous headroom: expiring early would show the old state
+# while the command is still on its way.
 COMMAND_CONFIRM_TIMEOUT = 300  # seconds
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class AndersenEvLock(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoor
                 self._device = device
                 # Try to update model info if we have device status
                 self._update_device_info_from_status()
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
 
         # Device no longer exists
         return False
@@ -94,11 +94,8 @@ class AndersenEvLock(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoor
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                try:
-                    if device.last_status and "sysUserLock" in device.last_status:
-                        return device.last_status["sysUserLock"]
-                except Exception as err:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-                    _LOGGER.error("Error getting lock state: %s", err)
+                if "sysUserLock" in device.live_status:
+                    return device.live_status["sysUserLock"]
                 # The getDevices userLock flag is not used as a fallback: it can disagree with the
                 # charger's own status, so an unknown state is more honest than a guess.
                 return None
@@ -154,7 +151,6 @@ class AndersenEvLock(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoor
         self._pending_locked = locked
         self._pending_deadline = monotonic() + COMMAND_CONFIRM_TIMEOUT
         self.async_write_ha_state()
-        await self.coordinator.async_request_refresh()
 
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the charging station (disable charging)."""

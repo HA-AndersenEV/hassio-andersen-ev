@@ -69,6 +69,33 @@ subscription deviceStatusUpdated($id: ID!) {
     chargeStatusSolarPower
     chargeStatusGridPower
     sysStatusColour
+    chargeOutsideSchedules
+    sysTemperature
+    sysVoltageC
+    sysGridEnergyDelta
+    cfgChargeAmpMax
+    sysSolarCT
+    sysGridCT
+    konnectSerial
+    sysProductId
+    sysProductName
+    sysHwVersion
+    scheduleSlotsArray {
+      startHour
+      startMinute
+      endHour
+      endMinute
+      enabled
+      dayMap {
+        monday
+        tuesday
+        wednesday
+        thursday
+        friday
+        saturday
+        sunday
+      }
+    }
     cfgLora0 {
       cfg
       epow
@@ -100,7 +127,12 @@ subscription deviceStatusUpdated($id: ID!) {
     chargeStatus {
       start
       chargeEnergyTotal
+      solarEnergyTotal
+      gridEnergyTotal
       chargePower
+      chargePowerMax
+      solarPower
+      gridPower
       duration
     }
   }
@@ -304,6 +336,7 @@ query getDeviceStatus($id: ID!) {
       solarMaxGridChargePercent
       solarChargeAlways
       solarOverride
+      chargeOutsideSchedules
       cfgAFEnable
       cfgAFAmpMax
       cfgCTConfig
