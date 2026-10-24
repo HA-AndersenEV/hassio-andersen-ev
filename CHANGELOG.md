@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.13.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.2...v0.13.0) (2026-10-24)
+
+
+### Features
+
+* add charge now and stop charging buttons ([#124](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/124)) ([2339da9](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/2339da9d0a73a30accc675eacdf3a51b7dea24d6))
+* Add solar charge controls- [#121](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/121) ([106234e](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/106234e9b170d910cd3a8527d71db6d5390d3c15))
+* add user max charge current and power controls ([#133](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/133)) ([84c89a9](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/84c89a950d579ffd71c367ea327c311618f0c2e0))
+* receive live charger status from the deviceStatusUpdated subscription instead of polling ([c56a3c4](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/c56a3c43502ceee529690962504259feba96dfda))
+
+
+### Bug Fixes
+
+* Downgrade to gql 4.0.0 for Home Assistant 2026.10.1 compatibility ([#131](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/131)) ([43ae4f1](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/43ae4f164eb10b270dadcb16c0b3bd0ef7664317))
+* let Home Assistant add the device name to entity names ([#125](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/125)) ([ec3d688](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/ec3d6883fc8109f4cb0fc59363594179eb910cf2))
+* remove the grid power sensor, which never had a value ([c56a3c4](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/c56a3c43502ceee529690962504259feba96dfda))
+* report the solar CT reading in the solar power sensor ([c56a3c4](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/c56a3c43502ceee529690962504259feba96dfda))
+* show charge outside schedule correctly during a Charge now session ([c56a3c4](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/c56a3c43502ceee529690962504259feba96dfda))
+* upgrade gql to 4.4.0 and enable boost switch by default ([#123](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/123)) ([db43039](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/db43039c87b4c0cbcaa74b75dac7f6b07ca23f90))
+
 ## [0.12.2](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.1...v0.12.2) (2026-10-07)
 
 
