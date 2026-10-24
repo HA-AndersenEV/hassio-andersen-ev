@@ -202,7 +202,6 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         )
         self.client = client
         self.devices: list[KonnectDevice] = []
-        self._device_availability: dict[str, bool] = {}
         self._rest_failing: set[str] = set()
         self._subscription_tasks: dict[str, asyncio.Task[None]] = {}
         self._subscription_failing: set[str] = set()
@@ -256,7 +255,7 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 refreshed.append(new_dev)
         self.devices = refreshed
 
-        # Fetch status for each device
+        # Live status comes from the subscription; the poll only covers what it doesn't carry.
         for device in self.devices:
             _LOGGER.debug(
                 "Device ID: %s, Name: %s, User Lock: %s",
@@ -264,21 +263,6 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 device.friendly_name,
                 device.user_lock,
             )
-            try:
-                status = await device.get_detailed_device_status()
-            except Exception as err:  # noqa: BLE001
-                self._mark_device_unavailable(device, err)
-                continue
-
-            if status is None:
-                self._mark_device_unavailable(device, "no status returned")
-                continue
-
-            device.status_available = True
-            if self._device_availability.get(device.device_id) is False:
-                _LOGGER.info("Device %s is back online", device.friendly_name)
-            self._device_availability[device.device_id] = True
-
             await self._update_user_device(device)
 
             try:
@@ -429,15 +413,6 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         if device.device_id in self._rest_failing:
             _LOGGER.info("REST device data for %s is available again", device.friendly_name)
             self._rest_failing.discard(device.device_id)
-
-    def _mark_device_unavailable(self, device, error) -> None:
-        """Mark a device unavailable and log once per transition."""
-        device.status_available = False
-        if self._device_availability.get(device.device_id, True):
-            _LOGGER.warning("Device %s is unavailable: %s", device.friendly_name, error)
-        else:
-            _LOGGER.debug("Device %s still unavailable: %s", device.friendly_name, error)
-        self._device_availability[device.device_id] = False
 
 
 def _remove_retired_entities(hass: HomeAssistant, coordinator: AndersenEvCoordinator) -> None:

@@ -34,7 +34,6 @@ def _make_coordinator(client=None, hass=None):
     coordinator = AndersenEvCoordinator.__new__(AndersenEvCoordinator)
     coordinator.client = client or MagicMock()
     coordinator.devices = []
-    coordinator._device_availability = {}
     coordinator._rest_failing = set()
     coordinator._subscription_tasks = {}
     coordinator._subscription_failing = set()
@@ -50,7 +49,6 @@ def _make_device(device_id="device_1", friendly_name="Device", user_lock=False):
     device.device_id = device_id
     device.friendly_name = friendly_name
     device.user_lock = user_lock
-    device.status_available = None
     device.get_detailed_device_status = AsyncMock(return_value={"online": True})
     device.get_last_charge = AsyncMock(return_value={"chargeEnergyTotal": 1.0})
     device.get_user_device = AsyncMock(return_value={"status": {"sysUserMaxChargeAmpSet": 16}})
@@ -105,7 +103,7 @@ class TestAsyncUpdateData:
     """Tests for AndersenEvCoordinator._async_update_data()."""
 
     @pytest.mark.asyncio
-    async def test_happy_path_fetches_status_and_marks_available(self):
+    async def test_happy_path_polls_only_what_the_subscription_lacks(self):
         device = _make_device()
         client = MagicMock()
         client.getDevices = AsyncMock(return_value=[device])
@@ -114,14 +112,12 @@ class TestAsyncUpdateData:
         result = await coordinator._async_update_data()
 
         assert result == [device]
-        device.get_detailed_device_status.assert_awaited_once()
-        # The solar cache is fed by the subscription, not the poll.
+        # Live status, including the solar cache, comes from the subscription.
+        device.get_detailed_device_status.assert_not_awaited()
         device.update_solar_status_from_device_status.assert_not_called()
         device.get_solar.assert_not_awaited()
         device.get_last_charge.assert_awaited_once()
         device.get_user_device.assert_awaited_once()
-        assert device.status_available is True
-        assert coordinator._device_availability[device.device_id] is True
 
     @pytest.mark.asyncio
     async def test_successful_update_clears_api_shape_repair_issue(self):
@@ -254,36 +250,8 @@ class TestAsyncUpdateData:
         assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_status_fetch_exception_marks_device_unavailable(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(side_effect=Exception("boom"))
-        client = MagicMock()
-        client.getDevices = AsyncMock(return_value=[device])
-        coordinator = _make_coordinator(client)
-
-        await coordinator._async_update_data()
-
-        assert device.status_available is False
-        assert coordinator._device_availability[device.device_id] is False
-        device.get_last_charge.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_status_none_marks_device_unavailable(self):
-        device = _make_device()
-        device.get_detailed_device_status = AsyncMock(return_value=None)
-        client = MagicMock()
-        client.getDevices = AsyncMock(return_value=[device])
-        coordinator = _make_coordinator(client)
-
-        await coordinator._async_update_data()
-
-        assert device.status_available is False
-        assert coordinator._device_availability[device.device_id] is False
-        device.get_last_charge.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_last_charge_fetch_exception_does_not_mark_device_unavailable(self):
-        """A failure fetching charge logs is independent of the primary status fetch."""
+    async def test_last_charge_fetch_exception_is_not_fatal(self):
+        """A failure fetching charge logs doesn't fail the refresh."""
         device = _make_device()
         device.get_last_charge = AsyncMock(side_effect=Exception("boom"))
         client = MagicMock()
@@ -293,8 +261,6 @@ class TestAsyncUpdateData:
         result = await coordinator._async_update_data()
 
         assert result == [device]
-        assert device.status_available is True
-        assert coordinator._device_availability[device.device_id] is True
 
     @pytest.mark.asyncio
     async def test_rest_failure_keeps_device_available_and_warns_once(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -308,7 +274,6 @@ class TestAsyncUpdateData:
         await coordinator._async_update_data()
         await coordinator._async_update_data()
 
-        assert device.status_available is True
         device.get_last_charge.assert_awaited()
         warnings = [r for r in caplog.records if "Failed to fetch REST device data" in r.getMessage()]
         assert len(warnings) == 1
@@ -328,48 +293,6 @@ class TestAsyncUpdateData:
 
         assert device.device_id not in coordinator._rest_failing
         assert "REST device data for Device is available again" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_device_recovery_logs_info(self):
-        device = _make_device()
-        client = MagicMock()
-        client.getDevices = AsyncMock(return_value=[device])
-        coordinator = _make_coordinator(client)
-        coordinator._device_availability[device.device_id] = False
-
-        with patch("andersen_ev._LOGGER") as mock_logger:
-            await coordinator._async_update_data()
-
-        assert device.status_available is True
-        assert coordinator._device_availability[device.device_id] is True
-        mock_logger.info.assert_called_once()
-
-
-class TestMarkDeviceUnavailable:
-    """Tests for AndersenEvCoordinator._mark_device_unavailable()."""
-
-    def test_first_unavailable_transition_logs_warning(self):
-        coordinator = _make_coordinator()
-        device = _make_device()
-
-        with patch("andersen_ev._LOGGER") as mock_logger:
-            coordinator._mark_device_unavailable(device, "boom")
-
-        assert device.status_available is False
-        assert coordinator._device_availability[device.device_id] is False
-        mock_logger.warning.assert_called_once()
-        mock_logger.debug.assert_not_called()
-
-    def test_already_unavailable_logs_debug_not_warning(self):
-        coordinator = _make_coordinator()
-        device = _make_device()
-        coordinator._device_availability[device.device_id] = False
-
-        with patch("andersen_ev._LOGGER") as mock_logger:
-            coordinator._mark_device_unavailable(device, "still broken")
-
-        mock_logger.debug.assert_called_once()
-        mock_logger.warning.assert_not_called()
 
 
 class TestMakeStaleDeviceListener:

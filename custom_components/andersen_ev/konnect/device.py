@@ -60,7 +60,6 @@ class KonnectDevice:
         self.subscription_connected = False
         self.subscription_disconnected_since = None
         self.last_subscription_update = None
-        self.status_available = True
 
     @property
     def last_status(self):

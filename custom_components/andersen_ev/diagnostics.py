@@ -34,7 +34,6 @@ def _device_diagnostics(device: KonnectDevice) -> dict[str, Any]:
         "device_id": device.device_id,
         "friendly_name": device.friendly_name,
         "user_lock": device.user_lock,
-        "status_available": device.status_available,
         "model_name": device.model_name,
         "last_status": device.last_status,
         # Only the REST status; its device and info objects hold account emails.
