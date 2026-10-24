@@ -7,11 +7,12 @@ from datetime import timedelta
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_DEVICE_ID,
@@ -21,6 +22,8 @@ from .const import (
     SERVICE_GET_DEVICE_INFO,
     SERVICE_GET_DEVICE_STATUS,
     SERVICE_RCM_RESET,
+    SUBSCRIPTION_RETRY_MAX,
+    SUBSCRIPTION_RETRY_MIN,
 )
 from .konnect.client import KonnectClient
 from .konnect.device import KonnectDevice
@@ -48,6 +51,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
     entry.runtime_data = coordinator
 
     entry.async_on_unload(coordinator.async_add_listener(_make_stale_device_listener(hass, coordinator)))
+
+    coordinator.async_start_subscriptions()
+    # Picks up devices added to, or removed from, the account after setup.
+    entry.async_on_unload(coordinator.async_add_listener(coordinator.async_start_subscriptions))
 
     # Register services
     async def disable_all_schedules(call: ServiceCall) -> None:
@@ -166,6 +173,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -
 
 async def async_unload_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:
     """Unload a config entry."""
+    # Stop the subscription loops first so closing the devices isn't seen as a dropped connection.
+    await entry.runtime_data.async_stop_subscriptions()
     await asyncio.gather(
         *(device.close() for device in entry.runtime_data.devices),
         return_exceptions=True,
@@ -189,6 +198,8 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
         self.devices: list[KonnectDevice] = []
         self._device_availability: dict[str, bool] = {}
         self._rest_failing: set[str] = set()
+        self._subscription_tasks: dict[str, asyncio.Task[None]] = {}
+        self._subscription_failing: set[str] = set()
 
     async def async_request_refresh(self) -> None:
         """Request a data refresh after a short delay.
@@ -278,6 +289,98 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 _LOGGER.warning("Failed to fetch last charge for %s: %s", device.friendly_name, err)
 
         return self.devices
+
+    @callback
+    def async_start_subscriptions(self) -> None:
+        """Run a live status subscription for each device, and stop those of removed devices."""
+        assert self.config_entry is not None
+        current = {device.device_id: device for device in self.devices}
+        for device_id in self._subscription_tasks.keys() - current.keys():
+            self._subscription_tasks.pop(device_id).cancel()
+        for device_id, device in current.items():
+            if device_id not in self._subscription_tasks:
+                self._subscription_tasks[device_id] = self.config_entry.async_create_background_task(
+                    self.hass,
+                    self._async_run_subscription(device),
+                    name=f"{DOMAIN} subscription {device_id}",
+                )
+
+    async def async_stop_subscriptions(self) -> None:
+        """Cancel every subscription loop and wait for them to finish."""
+        tasks = list(self._subscription_tasks.values())
+        self._subscription_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _async_run_subscription(self, device: KonnectDevice) -> None:
+        """Keep a device's live status subscription open, resubscribing with backoff after failures."""
+        retry_delay = SUBSCRIPTION_RETRY_MIN
+        device.subscription_disconnected_since = dt_util.utcnow()
+        try:
+            while True:
+                reason: object = "the server ended the subscription"
+                try:
+                    async for payload in device.subscription.updates():
+                        self._handle_subscription_payload(device, payload)
+                        retry_delay = SUBSCRIPTION_RETRY_MIN
+                except AndersenError as err:
+                    reason = err
+                except Exception as err:  # pylint: disable=broad-exception-caught
+                    # Without this, one unexpected payload would end live updates until a restart.
+                    if device.device_id not in self._subscription_failing:
+                        _LOGGER.exception("Unexpected error in live status subscription for %s", device.friendly_name)
+                    reason = err
+                self._mark_subscription_lost(device, reason, retry_delay)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, SUBSCRIPTION_RETRY_MAX)
+        finally:
+            device.subscription_connected = False
+            await device.subscription.close()
+
+    @callback
+    def _handle_subscription_payload(self, device: KonnectDevice, payload: dict) -> None:
+        """Store a subscription payload, log it and notify listeners if anything changed."""
+        initial = device.last_subscription_status is None
+        changes = device.apply_subscription_update(payload)
+        device.last_subscription_update = dt_util.utcnow()
+        if not device.subscription_connected:
+            device.subscription_connected = True
+            device.subscription_disconnected_since = None
+            if device.device_id in self._subscription_failing:
+                self._subscription_failing.discard(device.device_id)
+                _LOGGER.info("Live status subscription for %s restored", device.friendly_name)
+        if initial:
+            _LOGGER.debug("Initial live status for %s: %s", device.friendly_name, payload)
+        elif changes:
+            _LOGGER.debug(
+                "Live status update for %s: %s",
+                device.friendly_name,
+                ", ".join(f"{field} {old!r} -> {new!r}" for field, (old, new) in changes.items()),
+            )
+        if changes:
+            self.async_update_listeners()
+
+    def _mark_subscription_lost(self, device: KonnectDevice, reason: object, retry_delay: int) -> None:
+        """Record a dropped subscription, warning once until it is restored."""
+        device.subscription_connected = False
+        if device.subscription_disconnected_since is None:
+            device.subscription_disconnected_since = dt_util.utcnow()
+        if device.device_id in self._subscription_failing:
+            _LOGGER.debug(
+                "Live status subscription for %s still unavailable (%s), retrying in %s s",
+                device.friendly_name,
+                reason,
+                retry_delay,
+            )
+            return
+        self._subscription_failing.add(device.device_id)
+        _LOGGER.warning(
+            "Live status subscription for %s lost (%s), retrying in %s s",
+            device.friendly_name,
+            reason,
+            retry_delay,
+        )
 
     async def _update_user_device(self, device: KonnectDevice) -> None:
         """Refresh the device's REST data, keeping the cached copy if the call fails."""

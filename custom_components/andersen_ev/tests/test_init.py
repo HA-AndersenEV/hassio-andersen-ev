@@ -35,6 +35,8 @@ def _make_coordinator(client=None, hass=None):
     coordinator.devices = []
     coordinator._device_availability = {}
     coordinator._rest_failing = set()
+    coordinator._subscription_tasks = {}
+    coordinator._subscription_failing = set()
     coordinator.hass = hass if hass is not None else MagicMock()
     return coordinator
 
@@ -468,8 +470,25 @@ class TestAsyncSetupEntry:
         ):
             await async_setup_entry(hass, entry)
 
-        mock_coordinator.async_add_listener.assert_called_once()
-        entry.async_on_unload.assert_called_once()
+        assert mock_coordinator.async_add_listener.call_count == 2
+        assert entry.async_on_unload.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_starts_subscriptions_and_follows_device_changes(self):
+        hass = _make_hass()
+        entry = _make_entry()
+        mock_coordinator = MagicMock()
+        mock_coordinator.async_config_entry_first_refresh = AsyncMock()
+        mock_coordinator.data = []
+
+        with (
+            patch("andersen_ev.KonnectClient"),
+            patch("andersen_ev.AndersenEvCoordinator", return_value=mock_coordinator),
+        ):
+            await async_setup_entry(hass, entry)
+
+        mock_coordinator.async_start_subscriptions.assert_called_once_with()
+        mock_coordinator.async_add_listener.assert_any_call(mock_coordinator.async_start_subscriptions)
 
     @pytest.mark.asyncio
     async def test_creates_client_and_coordinator_and_stores_runtime_data(self):
@@ -552,9 +571,13 @@ class TestAsyncUnloadEntry:
         device_b.close = AsyncMock()
         entry = _make_entry()
         entry.runtime_data = MagicMock(devices=[device_a, device_b])
+        order = MagicMock()
+        entry.runtime_data.async_stop_subscriptions = AsyncMock(side_effect=lambda: order("stop"))
+        device_a.close.side_effect = lambda: order("close")
 
         result = await async_unload_entry(hass, entry)
 
+        assert [c.args[0] for c in order.call_args_list] == ["stop", "close"]
         device_a.close.assert_awaited_once()
         device_b.close.assert_awaited_once()
         hass.config_entries.async_unload_platforms.assert_awaited_once_with(entry, PLATFORMS)

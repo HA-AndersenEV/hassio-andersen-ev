@@ -1,5 +1,6 @@
 """Tests for the Andersen EV diagnostics platform."""
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -96,3 +97,20 @@ class TestAsyncGetConfigEntryDiagnostics:
 
         assert len(result["devices"]) == 2
         assert isinstance(result["client"], dict)
+
+    @pytest.mark.asyncio
+    async def test_includes_subscription_state(self, mock_device: KonnectDevice) -> None:
+        """The subscription's connection state and merged status are included."""
+        mock_device.apply_subscription_update({"evseState": 3})
+        mock_device.subscription_connected = True
+        mock_device.last_subscription_update = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
+        entry = _make_entry([mock_device])
+
+        result = await async_get_config_entry_diagnostics(MagicMock(), entry)
+
+        assert result["devices"][0]["subscription"] == {
+            "connected": True,
+            "disconnected_since": None,
+            "last_update": "2026-10-24T12:00:00+00:00",
+            "last_status": {"evseState": 3},
+        }

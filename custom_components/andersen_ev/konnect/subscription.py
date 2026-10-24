@@ -72,6 +72,7 @@ class DeviceStatusSubscription:
         self._token_provider = token_provider
         self._token_refresh = token_refresh
         self._client: Client | None = None
+        self._restart_requested = False
 
     async def updates(self) -> AsyncGenerator[dict[str, Any]]:
         """Yield each deviceStatusUpdated payload until the connection ends.
@@ -79,7 +80,7 @@ class DeviceStatusSubscription:
         The first payload arrives straight after subscribing and holds every field.
         A refused token is refreshed and retried once, then raises AndersenAuthError.
         Any other failure raises AndersenSubscriptionError. Returns if the server
-        ends the subscription.
+        ends the subscription. A restart() reconnects without ending the iteration.
         """
         refreshed = False
         while True:
@@ -95,7 +96,25 @@ class DeviceStatusSubscription:
                 await self._token_refresh()
                 refreshed = True
                 continue
+            except AndersenSubscriptionError:
+                if not self._take_restart_request():
+                    raise
+                continue
+            if not self._take_restart_request():
+                return
+
+    async def restart(self) -> None:
+        """Reconnect with the current token, for example after it was refreshed elsewhere."""
+        if self._client is None:
             return
+        _LOGGER.debug("Reconnecting subscription for %s with the current token", self.device_id)
+        self._restart_requested = True
+        await self.close()
+
+    def _take_restart_request(self) -> bool:
+        """Return whether a restart was requested, clearing the request."""
+        requested, self._restart_requested = self._restart_requested, False
+        return requested
 
     async def _stream(self) -> AsyncGenerator[dict[str, Any]]:
         """Open one connection and yield its payloads."""

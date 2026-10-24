@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from . import const
@@ -32,6 +33,13 @@ class KonnectDevice:
     currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
     _subscription: DeviceStatusSubscription | None = None
+    # Merged deviceStatusUpdated payloads, kept apart from the polled status so a poll can't wipe
+    # subscription-only fields.
+    _last_subscription_status: dict[str, Any] | None = None
+    # Set by the integration's subscription loop.
+    subscription_connected: bool = False
+    subscription_disconnected_since: datetime | None = None
+    last_subscription_update: datetime | None = None
 
     def __init__(self, api, device_id, friendly_name, user_lock):
         """Initialize the device."""
@@ -48,6 +56,10 @@ class KonnectDevice:
         self.currency = None
         self._graphql_client = None
         self._subscription = None
+        self._last_subscription_status = None
+        self.subscription_connected = False
+        self.subscription_disconnected_since = None
+        self.last_subscription_update = None
         self.status_available = True
 
     @property
@@ -83,6 +95,23 @@ class KonnectDevice:
         return self._last_user_device
 
     @property
+    def last_subscription_status(self) -> dict[str, Any] | None:
+        """Return the merged deviceStatusUpdated payloads, or None before the first one."""
+        return self._last_subscription_status
+
+    def apply_subscription_update(self, payload: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
+        """Merge a deviceStatusUpdated payload into the cache and return what changed.
+
+        Changes are keyed by field name, with nested fields dotted (``chargeStatus.chargePower``),
+        and map to ``(old, new)``.
+        """
+        if self._last_subscription_status is None:
+            self._last_subscription_status = {}
+        changes: dict[str, tuple[Any, Any]] = {}
+        _merge_status(self._last_subscription_status, payload, "", changes)
+        return changes
+
+    @property
     def last_charge(self):
         """Return the last known charge session data."""
         return self._last_charge
@@ -106,7 +135,7 @@ class KonnectDevice:
             self._subscription = DeviceStatusSubscription(
                 device_id=self.device_id,
                 token_provider=self._current_token,
-                token_refresh=self._refresh_graphql_token,
+                token_refresh=self._refresh_token,
             )
         return self._subscription
 
@@ -115,10 +144,17 @@ class KonnectDevice:
         assert self.api.token is not None, "subscription used before authentication"
         return self.api.token
 
-    async def _refresh_graphql_token(self):
+    async def _refresh_token(self) -> tuple[str, float | None]:
         """Refresh authentication and return new token with expiry time."""
         await self.api.refresh_token()
-        return self.api.token, getattr(self.api, "token_expiry_time", None)
+        return self._current_token(), getattr(self.api, "token_expiry_time", None)
+
+    async def _refresh_graphql_token(self) -> tuple[str, float | None]:
+        """Refresh for the query client, then move the subscription onto the new token."""
+        token = await self._refresh_token()
+        if self._subscription is not None:
+            await self._subscription.restart()
+        return token
 
     async def close(self):
         """Clean up the GraphQL client and subscription."""
@@ -533,3 +569,18 @@ class KonnectDevice:
         if currency:
             self.currency = currency
         return device_info
+
+
+def _merge_status(
+    cache: dict[str, Any], payload: dict[str, Any], prefix: str, changes: dict[str, tuple[Any, Any]]
+) -> None:
+    """Merge payload into cache in place, merging nested objects key by key and recording changes."""
+    for key, value in payload.items():
+        name = f"{prefix}{key}"
+        old = cache.get(key)
+        if isinstance(value, dict) and isinstance(old, dict):
+            _merge_status(old, value, f"{name}.", changes)
+            continue
+        if key not in cache or old != value:
+            changes[name] = (old, value)
+        cache[key] = dict(value) if isinstance(value, dict) else value

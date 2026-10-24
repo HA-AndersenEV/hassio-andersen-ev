@@ -8,6 +8,9 @@ CONF_PASSWORD = "password"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 60  # seconds
+# Wait before resubscribing after the live status subscription drops; doubles per failure.
+SUBSCRIPTION_RETRY_MIN = 5  # seconds
+SUBSCRIPTION_RETRY_MAX = 300  # seconds
 
 # Converts charge current to power, as the Konnect+ app does (32 A gives 7.2 kW).
 KW_PER_AMP = 0.225

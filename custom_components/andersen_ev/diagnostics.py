@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -38,6 +39,12 @@ def _device_diagnostics(device: KonnectDevice) -> dict[str, Any]:
         "last_status": device.last_status,
         # Only the REST status; its device and info objects hold account emails.
         "last_rest_status": device.last_rest_status,
+        "subscription": {
+            "connected": device.subscription_connected,
+            "disconnected_since": _isoformat(device.subscription_disconnected_since),
+            "last_update": _isoformat(device.last_subscription_update),
+            "last_status": device.last_subscription_status,
+        },
     }
     return async_redact_data(data, TO_REDACT)
 
@@ -54,3 +61,7 @@ def _client_diagnostics(api) -> dict[str, Any]:
         "deviceKey": api.device_key,
     }
     return async_redact_data(data, TO_REDACT)
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None

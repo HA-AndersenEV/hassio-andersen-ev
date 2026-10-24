@@ -264,3 +264,98 @@ async def test_device_close_closes_subscription(mock_device: KonnectDevice) -> N
         await mock_device.close()
 
     close.assert_awaited_once()
+
+
+async def test_restart_reconnects_without_ending_updates(
+    subscription: DeviceStatusSubscription, tokens: _Tokens
+) -> None:
+    """restart() reconnects with the current token and updates() carries on."""
+    clients = [_mock_client(_payload(1), TransportClosed("closed by restart")), _mock_client(_payload(2))]
+    with (
+        patch("andersen_ev.konnect.subscription.AIOHTTPWebsocketsTransport") as transport_cls,
+        patch("andersen_ev.konnect.subscription.Client", side_effect=clients),
+    ):
+        updates = subscription.updates()
+        assert (await anext(updates))["evseState"] == 1
+        tokens.token = "token-9"
+        await subscription.restart()
+        remaining = [payload async for payload in updates]
+
+    assert remaining == [{"id": DEVICE_ID, "evseState": 2}]
+    assert transport_cls.call_args_list[1].kwargs["init_payload"] == {"authToken": "Bearer token-9"}
+    clients[0].close_async.assert_awaited_once()
+    tokens.refresh.assert_not_awaited()
+
+
+async def test_restart_when_stream_ends_cleanly(subscription: DeviceStatusSubscription) -> None:
+    """A restart that makes the stream end without an error also reconnects."""
+    clients = [_mock_client(_payload(1)), _mock_client(_payload(2))]
+    with patch("andersen_ev.konnect.subscription.Client", side_effect=clients):
+        updates = subscription.updates()
+        await anext(updates)
+        await subscription.restart()
+        remaining = [payload async for payload in updates]
+
+    assert remaining == [{"id": DEVICE_ID, "evseState": 2}]
+
+
+async def test_restart_without_connection_does_nothing(subscription: DeviceStatusSubscription) -> None:
+    """restart() before connecting doesn't leave a pending restart behind."""
+    await subscription.restart()
+
+    with patch("andersen_ev.konnect.subscription.Client", return_value=_mock_client(_payload(1))):
+        payloads = await _collect(subscription)
+
+    assert len(payloads) == 1
+
+
+@pytest.mark.parametrize(
+    ("refresh", "restarted"),
+    [
+        pytest.param("_refresh_graphql_token", True, id="query_client_refresh"),
+        pytest.param("_refresh_token", False, id="subscription_refresh"),
+    ],
+)
+async def test_token_refresh_restarts_subscription(
+    mock_device: KonnectDevice, mock_api: MagicMock, refresh: str, restarted: bool
+) -> None:
+    """A refresh by the query client moves the subscription onto the new token; its own refresh doesn't."""
+    mock_api.refresh_token.side_effect = lambda: setattr(mock_api, "token", "new_token")
+    with patch.object(DeviceStatusSubscription, "restart", AsyncMock()) as restart:
+        _ = mock_device.subscription
+        token, _expiry = await getattr(mock_device, refresh)()
+
+    assert token == "new_token"
+    assert restart.await_count == int(restarted)
+
+
+def test_apply_subscription_update_merges_and_reports_changes(mock_device: KonnectDevice) -> None:
+    """Payloads merge into the cache, nested objects key by key, and changes are reported dotted."""
+    first = mock_device.apply_subscription_update(
+        {"evseState": 1, "cfgLora0": None, "chargeStatus": {"chargePower": 0, "duration": 5}}
+    )
+    second = mock_device.apply_subscription_update(
+        {"evseState": 3, "cfgLora0": None, "chargeStatus": {"chargePower": 7120}, "sysPlugged": True}
+    )
+
+    assert first == {
+        "evseState": (None, 1),
+        "cfgLora0": (None, None),
+        "chargeStatus": (None, {"chargePower": 0, "duration": 5}),
+    }
+    assert second == {"evseState": (1, 3), "chargeStatus.chargePower": (0, 7120), "sysPlugged": (None, True)}
+    assert mock_device.last_subscription_status == {
+        "evseState": 3,
+        "cfgLora0": None,
+        "chargeStatus": {"chargePower": 7120, "duration": 5},
+        "sysPlugged": True,
+    }
+
+
+def test_apply_subscription_update_copies_nested_objects(mock_device: KonnectDevice) -> None:
+    """The cache doesn't share nested dicts with the payload it came from."""
+    payload = {"chargeStatus": {"chargePower": 0}}
+    mock_device.apply_subscription_update(payload)
+    payload["chargeStatus"]["chargePower"] = 99
+
+    assert mock_device.last_subscription_status == {"chargeStatus": {"chargePower": 0}}
