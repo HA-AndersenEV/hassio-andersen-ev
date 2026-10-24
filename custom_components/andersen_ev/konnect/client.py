@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from pycognito.aws_srp import AWSSRP
 
 from . import const
+from .changes import find_changes, format_changes
 from .device import KonnectDevice
 from .exceptions import AndersenApiError, AndersenAuthError, AndersenConnectionError
 
@@ -56,6 +57,8 @@ class KonnectClient:
         self.token_expiry_time = None
         self.refresh_token_value = None  # Keeping property for compatibility with storage
         self.device_key = None
+        # Last response logged per call, so later polls only log what changed.
+        self._last_logged: dict[str, dict] = {}
 
     async def authenticate_user(self):
         """Authenticate with AWS Cognito using SRP."""
@@ -237,7 +240,7 @@ class KonnectClient:
         _LOGGER.debug("REST getDevices returned %s devices", len(response_body["devices"]))
 
         for device in response_body["devices"]:
-            _LOGGER.debug("REST getDevices device details: %s", _redact(device))
+            self._log_response(f"getDevices {device.get('id')}", device)
             # Use "Andersen" as default friendly name if not set or empty
             friendly_name = device.get("friendlyName") or "Andersen"
             devices.append(
@@ -273,11 +276,25 @@ class KonnectClient:
             body = response.json()
         except ValueError as err:
             raise AndersenApiError("Unexpected API response: getDevice body is not JSON") from err
-        _LOGGER.debug("REST getDevice response for device %s: %s", device_id, _redact(body))
+        self._log_response(f"getDevice {device_id}", body)
         user_device = body.get("userDevice") if isinstance(body, dict) else None
         if not isinstance(user_device, dict) or not isinstance(user_device.get("status"), dict):
             raise AndersenApiError("Unexpected API response shape: missing 'userDevice.status'")
         return user_device
+
+    def _log_response(self, label: str, data: object) -> None:
+        """Log a REST response in full the first time, then only the fields that changed."""
+        if not isinstance(data, dict):
+            _LOGGER.debug("REST %s: %s", label, data)
+            return
+        redacted = _redact(data)
+        assert isinstance(redacted, dict)
+        previous = self._last_logged.get(label)
+        self._last_logged[label] = redacted
+        if previous is None:
+            _LOGGER.debug("REST %s (initial): %s", label, redacted)
+        elif changes := find_changes(previous, redacted):
+            _LOGGER.debug("REST %s: %s", label, format_changes(changes, show_old=False))
 
     async def __get_device_response(self, device_id: str) -> requests.Response:
         _LOGGER.debug("Calling REST GET %s?deviceId=%s", const.API_DEVICE_URL, device_id)

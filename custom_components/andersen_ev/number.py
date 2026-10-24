@@ -245,7 +245,13 @@ class AndersenEvUserMaxCharge(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ander
                 },
             )
         amps = pick(requested, allowed)
-        _LOGGER.debug("Requested %s for %s, setting user max charge current to %s A", requested, device_name, amps)
+        _LOGGER.debug(
+            "Requested %s %s for %s, setting user max charge current to %s A",
+            requested,
+            self.native_unit_of_measurement,
+            device_name,
+            amps,
+        )
         try:
             success = await self._device.set_user_max_amps(amps)
         except AndersenError as err:

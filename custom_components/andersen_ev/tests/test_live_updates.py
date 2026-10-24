@@ -91,7 +91,7 @@ def test_initial_payload_is_stored_and_logged_in_full(
     assert mock_device.subscription_connected is True
     assert mock_device.subscription_disconnected_since is None
     assert mock_device.last_subscription_update is not None
-    assert f"Initial live status for Test Device: {INITIAL}" in caplog.text
+    assert f"deviceStatusUpdated for Test Device (initial): {INITIAL}" in caplog.text
     harness.listeners.assert_called_once()
 
 
@@ -107,8 +107,8 @@ def test_later_payload_logs_only_changes(mock_device: KonnectDevice, caplog: pyt
         mock_device, {**INITIAL, "evseState": 3, "chargeStatus": {"chargePower": 7120, "duration": 10}}
     )
 
-    assert "Live status update for Test Device: evseState 1 -> 3, chargeStatus.chargePower 0 -> 7120" in caplog.text
-    assert "Initial live status" not in caplog.text
+    assert "deviceStatusUpdated for Test Device: evseState 1 -> 3, chargeStatus.chargePower 0 -> 7120" in caplog.text
+    assert "(initial)" not in caplog.text
     assert _status(mock_device)["chargeStatus"] == {"chargePower": 7120, "duration": 10}
 
 
@@ -123,7 +123,7 @@ def test_unchanged_payload_logs_nothing(mock_device: KonnectDevice, caplog: pyte
 
     coordinator._handle_subscription_payload(mock_device, dict(INITIAL))
 
-    assert "Live status update" not in caplog.text
+    assert "deviceStatusUpdated" not in caplog.text
     harness.listeners.assert_not_called()
 
 

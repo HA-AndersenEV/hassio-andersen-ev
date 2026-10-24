@@ -29,6 +29,7 @@ from .const import (
     SUBSCRIPTION_RETRY_MAX,
     SUBSCRIPTION_RETRY_MIN,
 )
+from .konnect.changes import format_changes
 from .konnect.client import KonnectClient
 from .konnect.device import KonnectDevice
 from .konnect.exceptions import AndersenApiError, AndersenAuthError, AndersenError
@@ -351,13 +352,9 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
                 self._subscription_failing.discard(device.device_id)
                 _LOGGER.info("Live status subscription for %s restored", device.friendly_name)
         if initial:
-            _LOGGER.debug("Initial live status for %s: %s", device.friendly_name, payload)
+            _LOGGER.debug("deviceStatusUpdated for %s (initial): %s", device.friendly_name, payload)
         elif changes:
-            _LOGGER.debug(
-                "Live status update for %s: %s",
-                device.friendly_name,
-                ", ".join(f"{field} {old!r} -> {new!r}" for field, (old, new) in changes.items()),
-            )
+            _LOGGER.debug("deviceStatusUpdated for %s: %s", device.friendly_name, format_changes(changes))
         self._live_status_event(device.device_id).set()
         if changes:
             device.update_solar_status_from_device_status(device.live_status)
