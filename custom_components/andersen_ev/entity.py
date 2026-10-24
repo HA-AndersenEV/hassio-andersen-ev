@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from homeassistant.helpers.entity import ChildDeviceInfo, DeviceInfo
 from homeassistant.util import dt as dt_util
@@ -33,12 +33,22 @@ def _text(value: object) -> str | None:
     return text or None
 
 
-def device_info_from_status(status: dict[str, Any]) -> dict[str, str]:
+class StatusDeviceInfo(TypedDict, total=False):
+    """Device registry fields that come from the live status (typed to match DeviceInfo)."""
+
+    model: str | None
+    model_id: str | None
+    hw_version: str | None
+    sw_version: str | None
+    serial_number: str | None
+
+
+def device_info_from_status(status: dict[str, Any]) -> StatusDeviceInfo:
     """Return the model, model id, hardware/firmware versions and serial number found in a status.
 
     The keys match the device registry's, so the result can be passed to async_update_device.
     """
-    info: dict[str, str] = {}
+    info: StatusDeviceInfo = {}
     product_id = _text(status.get("sysProductId"))
     # Prefer the name the charger is sold under, then the API's internal product name,
     # then the bare id, so an unrecognised charger still shows something identifiable.
@@ -72,5 +82,4 @@ class AndersenEvDeviceInfoMixin:
         """Update model, hardware/firmware version and serial number from device status."""
         assert self._attr_device_info is not None, "_attr_device_info must be set before this call"
         device_info = cast(DeviceInfo, self._attr_device_info)
-        for key, value in device_info_from_status(self._device.live_status).items():
-            device_info[key] = value
+        device_info.update(device_info_from_status(self._device.live_status))
