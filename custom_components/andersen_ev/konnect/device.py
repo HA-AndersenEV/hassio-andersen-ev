@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import const
 from .graphql_client import GraphQLClient
+from .subscription import DeviceStatusSubscription
 
 if TYPE_CHECKING:
     from .client import KonnectClient
@@ -30,6 +31,7 @@ class KonnectDevice:
     model_name: str | None = None
     currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
+    _subscription: DeviceStatusSubscription | None = None
 
     def __init__(self, api, device_id, friendly_name, user_lock):
         """Initialize the device."""
@@ -45,6 +47,7 @@ class KonnectDevice:
         self.model_name = None
         self.currency = None
         self._graphql_client = None
+        self._subscription = None
         self.status_available = True
 
     @property
@@ -96,15 +99,33 @@ class KonnectDevice:
             )
         return self._graphql_client
 
+    @property
+    def subscription(self) -> DeviceStatusSubscription:
+        """Lazily create the deviceStatusUpdated subscription on first use."""
+        if self._subscription is None:
+            self._subscription = DeviceStatusSubscription(
+                device_id=self.device_id,
+                token_provider=self._current_token,
+                token_refresh=self._refresh_graphql_token,
+            )
+        return self._subscription
+
+    def _current_token(self) -> str:
+        """Return the account's current bearer token."""
+        assert self.api.token is not None, "subscription used before authentication"
+        return self.api.token
+
     async def _refresh_graphql_token(self):
         """Refresh authentication and return new token with expiry time."""
         await self.api.refresh_token()
         return self.api.token, getattr(self.api, "token_expiry_time", None)
 
     async def close(self):
-        """Clean up the GraphQL client resources."""
+        """Clean up the GraphQL client and subscription."""
         if self._graphql_client is not None:
             await self._graphql_client.close()
+        if self._subscription is not None:
+            await self._subscription.close()
 
     async def reset_rcm(self):
         """Reset RCM fault on the device."""

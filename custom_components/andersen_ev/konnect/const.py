@@ -3,6 +3,7 @@
 DOMAIN = "konnect"
 
 GRAPHQL_URL = "https://graphql-mobile.andersen-ev.com"
+GRAPHQL_WS_URL = "wss://graphql-mobile.andersen-ev.com/graphql"
 GRAPHQL_USER_MAP_URL = "https://graphql.andersen-ev.com/get-pending-user"
 
 API_DEVICES_URL = "https://mobile.andersen-ev.com/api/getDevices"
@@ -16,6 +17,92 @@ mutation setSchedules($deviceId: ID!, $scheduleSlots: ScheduleSlotsInput!) {
     id
     name
     return_value
+  }
+}
+"""
+
+GRAPHQL_DEVICE_STATUS_SUBSCRIPTION = """
+subscription deviceStatusUpdated($id: ID!) {
+  deviceStatusUpdated(id: $id) {
+    id
+    sysFwVersion
+    evseState
+    online
+    sysRssi
+    sysSSID
+    lastEvent
+    lastEventAge
+    sysTime
+    sysSch0
+    sysSch1
+    sysSch2
+    sysSch3
+    sysSch4
+    sysSch5
+    sysSch6
+    sysSch7
+    sysSch8
+    sysSch9
+    sysFaultCode
+    sysSchEnabled
+    sysUserLock
+    sysScheduleLock
+    sysSolarPower
+    sysGridPower
+    solarMaxGridChargePercent
+    solarChargeAlways
+    solarOverride
+    sysForceStop
+    cfgCTConfig
+    sysSchDSORandom
+    sysPlugged
+    sysUserMaxChargeAmpSet
+    evseChargeAmpCurrentLimit
+    sysAmpA
+    chargeStatusStart
+    chargeStatusDuration
+    chargeStatusChargeEnergyTotal
+    chargeStatusSolarEnergyTotal
+    chargeStatusGridEnergyTotal
+    chargeStatusChargePower
+    chargeStatusChargePowerMax
+    chargeStatusSolarPower
+    chargeStatusGridPower
+    sysStatusColour
+    cfgLora0 {
+      cfg
+      epow
+      on
+      rssi
+      eui
+    }
+    cfgLora1 {
+      cfg
+      epow
+      on
+      rssi
+      eui
+    }
+    cfgLora2 {
+      cfg
+      epow
+      on
+      rssi
+      eui
+    }
+    cfgLora3 {
+      cfg
+      epow
+      on
+      rssi
+      eui
+    }
+    chargeStatus {
+      start
+      chargeEnergyTotal
+      chargePower
+      duration
+    }
   }
 }
 """
