@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
-from .entity import AndersenEvDeviceInfoMixin
+from .entity import AndersenEvDeviceInfoMixin, live_status_available
 from .konnect.device import KonnectDevice
 
 PARALLEL_UPDATES = 1
@@ -95,7 +95,7 @@ class AndersenEvButton(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCo
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     async def async_press(self) -> None:
@@ -106,4 +106,3 @@ class AndersenEvButton(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCo
                 translation_key=f"{self.entity_description.key}_failed",
                 translation_placeholders={"device_name": self._device.friendly_name},
             )
-        await self.coordinator.async_request_refresh()

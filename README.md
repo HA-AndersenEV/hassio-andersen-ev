@@ -28,7 +28,10 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
   * Get detailed device information: `andersen_ev.get_device_info` (results displayed in UI)
   * Get detailed real-time device status: `andersen_ev.get_device_status` (results displayed in UI)
   * Reset RCM: `andersen_ev.reset_rcm`
-* Live grid power sensors for those without smart meters.
+* Live grid power sensors for those without smart meters, and a solar power sensor for chargers with a solar CT clamp.
+* Live updates: charger status is pushed to Home Assistant within seconds rather than polled.
+
+See [ENTITIES.md](ENTITIES.md) for every entity, where its value comes from, and what it sends when changed.
 
 ## Installation
 
@@ -110,8 +113,8 @@ own device automatically - no per-charger configuration is needed.
 
 ## Supported Functionality
 
-See [Features](#features) above for the full entity list and [Services](#services) for the
-service calls. In short:
+See [Features](#features) above, [ENTITIES.md](ENTITIES.md) for the full entity list, and
+[Services](#services) for the service calls. In short:
 * A **lock** entity per charger to enable/disable charging (`userLock`/`userUnlock`).
 * **Charge now** and **Stop charging** buttons per charger (`chargeNow`, and
   `userForceStop` + `stopChargeNow`).
@@ -122,25 +125,18 @@ service calls. In short:
 * **User max power** and **user max current** numbers to limit the charge rate, mirroring the app's
   power settings (`userAmpSet`).
 * **Sensors** for energy, cost, live grid/solar/charge power, voltage, temperature, fault code and
-  connector state, sourced from the charger's historical and live status data.
+  connector state, sourced from the charger's live status and its charge history.
 * **Services** to disable all schedules, reset an RCM fault, and pull a one-off detailed device
   info/status snapshot into the UI.
 
 ## How data is updated
 
-This is a cloud-only integration (`iot_class: cloud_polling`) - there is no local/LAN control of
-the chargepoint. All communication goes through Andersen's Konnect+ cloud (AWS Cognito
-authentication, a GraphQL API and a REST API), so an internet connection and Andersen's cloud
-being up are both required for entities to update or for services/lock actions to work.
+Charger status is pushed to Home Assistant within seconds, and a change you make shows once the
+charger confirms it. The last-session energy and cost sensors are polled every minute. See
+[DATA_UPDATES.md](DATA_UPDATES.md) for the details, including what happens if the connection
+drops.
 
-A `DataUpdateCoordinator` polls the API every 60 seconds for all devices on the account. Each poll
-also calls the REST `getDevice` endpoint, which reports some settings the GraphQL API doesn't, such
-as the user max charge current. If only that call fails, the charger stays available and the
-user max current and power numbers keep their last value. After a
-lock/unlock, schedule change, or RCM reset, the integration waits briefly before requesting a
-refresh, since the API needs a moment to apply the change before it's reflected in the polled
-status. The charger can show some delay in updating a value; if it takes longer than the brief pause to udate
-then the UI may display a stale value until the next poll occurs.
+## Using the controls
 
 ### Lock states and pending commands
 
@@ -149,7 +145,7 @@ confirmation that it did, so the lock entity only reports a change once the char
 shows it. In the meantime:
 
 * After you lock or unlock, the entity shows **`locking`** or **`unlocking`** until the charger
-  confirms. A confirmed change can take up to about 2.5 minutes to appear.
+  confirms. That usually takes a few seconds, but has taken up to about 2.5 minutes.
 * If nothing confirms the command within 5 minutes, the entity goes back to the state the charger
   reports and a warning is logged. A command sent while the charger is offline is queued by the
   cloud and applied when the charger reconnects, which can be much later.
@@ -179,8 +175,8 @@ Konnect+ app's home screen:
 * **Charge now** starts charging straight away, ignoring your schedules.
 * **Stop charging** stops the current charge.
 
-Like the lock, the charger can take a minute or two to act on a command and report back, so the
-charge state sensors may not change until a later poll.
+The connector and charge sensors change once the charger reports the new state, usually within a
+few seconds.
 
 The app only shows these buttons in some states, for example Charge now only when a car is
 plugged in and the charger is not already charging, and neither when the charger is locked. The
@@ -217,9 +213,8 @@ example 20 A becomes 16 A and 5.0 kW becomes 24 A (5.4 kW).
 setting is 16 A. Setting a value fails with an error if the installed maximum isn't known yet or is
 below 10 A.
 
-If no user max has been set, both entities show the installed maximum, as the app does. A change
-usually reaches the charger within a minute, but the value shown may revert briefly until the
-charger reports the new setting.
+If no user max has been set, both entities show the installed maximum, as the app does. Both
+entities show a new value once the charger reports it, usually within a couple of seconds.
 
 ### Solar charging controls
 
@@ -260,10 +255,6 @@ the settings reliably otherwise:
 
 Unlike the app, the integration doesn't limit grid source power to 0.2 kW steps.
 
-If a poll fails, the integration keeps showing the last-known good data instead of immediately
-marking entities unavailable, so a brief cloud hiccup doesn't blank your dashboard. Entities are
-only marked unavailable once polling has failed for a device with no prior cached data.
-
 ## Known limitations
 
 * **One Andersen account per Home Assistant instance.** The integration only allows a single
@@ -277,7 +268,13 @@ only marked unavailable once polling has failed for a device with no prior cache
   currency setting if the two differ.
 * **Grid power sensors are a workaround, not a replacement for a smart meter integration.** They're
   intended for those without a smart meter connected to Home Assistant already (see
-  [Features](#features)) - accuracy depends entirely on what the charger itself reports.
+  [Features](#features)) - accuracy depends entirely on what the charger itself reports. System
+  grid power is the whole house's import or export, measured by the charger's grid CT clamp.
+* **Grid energy includes the whole house.** The session and last-session grid energy sensors count
+  all grid import while the car was charging, not just the car's share, so they can exceed the
+  energy delivered to the car. Andersen doesn't report the car's own grid share.
+* **Solar sensors need a solar CT clamp.** Without one, Solar Power shows `unknown` and the solar
+  energy sensors hold a stale value.
 * **Fault codes are raw values.** The fault code sensor exposes whatever numeric/string code the
   charger reports, with no built-in lookup table translating codes to human-readable descriptions.
 
@@ -295,8 +292,8 @@ be driven by automations:
   solar-surplus charging automations even if you don't otherwise have a smart meter integration
   reporting home grid import/export.
 * **On-demand status for dashboards and scripts** - `get_device_status`/`get_device_info` return
-  data straight to the UI (or an automation/script), useful for a "check charger now" button or
-  script rather than waiting on the next 60-second poll.
+  data straight to the UI (or an automation/script), including fields that have no entity of their
+  own.
 
 ## Automation examples
 
@@ -347,15 +344,20 @@ Services > Andersen EV > (your charger)**.
   returning device data in a shape the integration doesn't recognise, a repair issue with this
   title is raised (falling back to cached data in the meantime). This usually means Andersen
   changed their API; check for an integration update, or open an issue if none is available.
-* **Entities showing as unavailable** - this normally means recent polls have failed with no
-  cached data to fall back on, most often because the Andersen cloud or your internet connection
-  is down. Check Andersen's status/app first, then check the Home Assistant logs (see below).
+* **Entities showing as unavailable** - most entities go unavailable when the live connection to
+  Andersen's cloud has been down for 5 minutes; the log shows a "Live status subscription ... lost"
+  warning when that starts. The energy and cost sensors go unavailable when the charge history
+  can't be fetched. Both usually mean the Andersen cloud or your internet connection is down. Check
+  Andersen's status/app first, then check the Home Assistant logs (see below).
+* **Entities showing as unknown just after a restart** - they fill in with the charger's first
+  live update, normally within a second. If they stay unknown, check the logs for subscription
+  warnings.
 * **Download diagnostics for a bug report** - from the integration entry's three-dot menu, choose
   **Download diagnostics**. Credentials and auth tokens are automatically redacted; the file
-  includes the config entry, auth-state, and per-device status, which is far more useful in a bug
+  includes the config entry, auth-state, per-device status and the live connection's state, which is far more useful in a bug
   report than a description alone.
 * **Check the logs** - go to **Settings > System > Logs** and filter for `andersen_ev` to see
-  polling, authentication, and service-call errors and warnings.
+  live connection, polling, authentication, and service-call errors and warnings.
 
 ## Removal
 

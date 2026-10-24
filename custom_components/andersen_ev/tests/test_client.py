@@ -553,9 +553,36 @@ class TestGetDevice:
             await client.getDevice("dev1")
 
         assert "Calling REST GET https://mobile-staging.andersen-ev.com/api/getDevice?deviceId=dev1" in caplog.text
-        assert "REST getDevice response for device dev1" in caplog.text
+        assert "REST getDevice dev1 (initial)" in caplog.text
         assert "'sysUserMaxChargeAmpSet': 16" in caplog.text
         assert "owner@example.com" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_later_responses_log_only_changes(
+        self, rest_client: tuple[KonnectClient, AsyncMock, AsyncMock], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """After the first response, only changed fields are logged, and nothing when nothing changed."""
+        client, _, _ = rest_client
+        bodies = [
+            {"userDevice": {"status": {"sysUserMaxChargeAmpSet": 16, "sysTime": "2026-10-24T12:00:00+01:00"}}},
+            {"userDevice": {"status": {"sysUserMaxChargeAmpSet": 16, "sysTime": "2026-10-24T12:00:00+01:00"}}},
+            {"userDevice": {"status": {"sysUserMaxChargeAmpSet": 32, "sysTime": "2026-10-24T12:01:00+01:00"}}},
+        ]
+
+        with patch("andersen_ev.konnect.client.requests") as mock_requests:
+            mock_requests.get.side_effect = [_json_response(200, body) for body in bodies]
+            await client.getDevice("dev1")
+            caplog.clear()
+            with caplog.at_level(logging.DEBUG, logger="andersen_ev.konnect.client"):
+                await client.getDevice("dev1")
+                unchanged = caplog.text
+                await client.getDevice("dev1")
+
+        assert "REST getDevice dev1" not in unchanged
+        assert (
+            "REST getDevice dev1: userDevice.status.sysTime -> '2026-10-24T12:01:00+01:00', "
+            "userDevice.status.sysUserMaxChargeAmpSet -> 32"
+        ) in caplog.text
 
     @pytest.mark.asyncio
     async def test_get_device_retries_once_after_401(

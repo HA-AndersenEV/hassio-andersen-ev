@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -10,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from . import AndersenEvConfigEntry
 from .konnect.device import KonnectDevice
 
-TO_REDACT = {"email", "password", "token", "refreshToken", "deviceKey"}
+TO_REDACT = {"email", "password", "token", "refreshToken", "deviceKey", "sysSSID", "konnectSerial", "eui"}
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> dict[str, Any]:
@@ -33,11 +34,15 @@ def _device_diagnostics(device: KonnectDevice) -> dict[str, Any]:
         "device_id": device.device_id,
         "friendly_name": device.friendly_name,
         "user_lock": device.user_lock,
-        "status_available": device.status_available,
         "model_name": device.model_name,
-        "last_status": device.last_status,
         # Only the REST status; its device and info objects hold account emails.
         "last_rest_status": device.last_rest_status,
+        "subscription": {
+            "connected": device.subscription_connected,
+            "disconnected_since": _isoformat(device.subscription_disconnected_since),
+            "last_update": _isoformat(device.last_subscription_update),
+            "last_status": device.last_subscription_status,
+        },
     }
     return async_redact_data(data, TO_REDACT)
 
@@ -54,3 +59,7 @@ def _client_diagnostics(api) -> dict[str, Any]:
         "deviceKey": api.device_key,
     }
     return async_redact_data(data, TO_REDACT)
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None

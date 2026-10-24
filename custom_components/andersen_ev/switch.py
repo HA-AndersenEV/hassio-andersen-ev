@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .const import DOMAIN
-from .entity import AndersenEvDeviceInfoMixin
+from .entity import AndersenEvDeviceInfoMixin, live_status_available
 from .grid_source import effective_max_amps, grid_supplement_on_percent
 from .konnect import const
 from .konnect.exceptions import AndersenError
@@ -153,37 +153,24 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
     @property
     def available(self) -> bool:
         """Return if the switch is available."""
-        # Check for the device in the coordinator data
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     @property
-    def is_on(self) -> bool:
-        """Return true if the schedule is enabled."""
-        # Check if device exists in coordinator data and update reference
+    def is_on(self) -> bool | None:
+        """Return true if the schedule is enabled, or None before the live status has it."""
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
                 break
 
-        # Try to get the latest scheduleSlotsArray from the device's last status
-        # This ensures we pick up changes made in the mobile app
-        if self._device.last_status:
-            status = self._device.last_status
-            if "scheduleSlotsArray" in status and len(status["scheduleSlotsArray"]) > self._schedule_index:
-                schedule_slot = status["scheduleSlotsArray"][self._schedule_index]
-                return schedule_slot["enabled"]
-
-        # If we can't get the state from the last status, return False as a safe default
-        _LOGGER.debug(
-            "Could not determine state for schedule %s of %s",
-            self._schedule_index,
-            self._device.friendly_name,
-        )
-        return False
+        slots = self._device.live_status.get("scheduleSlotsArray") or []
+        if len(slots) > self._schedule_index:
+            return slots[self._schedule_index]["enabled"]
+        return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable the schedule."""
@@ -195,8 +182,8 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
 
     async def _set_schedule_enabled(self, enabled: bool) -> None:
         """Set the enabled state of the schedule."""
-        if self._device.last_status and "scheduleSlotsArray" in self._device.last_status:
-            schedule_slots = copy.deepcopy(self._device.last_status["scheduleSlotsArray"])
+        if "scheduleSlotsArray" in self._device.live_status:
+            schedule_slots = copy.deepcopy(self._device.live_status["scheduleSlotsArray"])
         else:
             # Not in the coordinator data, so fetch it directly
             try:
@@ -239,20 +226,6 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
                 translation_key="schedule_update_failed",
                 translation_placeholders={"device_name": self._device.friendly_name},
             )
-
-        # Update the local state immediately
-        if self._device.last_status:
-            if "scheduleSlotsArray" not in self._device.last_status:
-                self._device.last_status["scheduleSlotsArray"] = schedule_slots
-            elif len(self._device.last_status["scheduleSlotsArray"]) <= self._schedule_index:
-                # Extend the array if needed
-                while len(self._device.last_status["scheduleSlotsArray"]) <= self._schedule_index:
-                    self._device.last_status["scheduleSlotsArray"].append({})
-
-            self._device.last_status["scheduleSlotsArray"][self._schedule_index]["enabled"] = enabled
-
-        self.async_write_ha_state()
-        await self.coordinator.async_request_refresh()
 
     def _schedule_update_error(self, err: AndersenError) -> HomeAssistantError:
         """Build the error raised when the API call itself fails."""
@@ -324,26 +297,13 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
         }
         self._attr_icon = "mdi:solar-power"
 
-    def _update_model_from_device_status(self):
-        """Update model information from device status if available."""
-        if hasattr(self._device, "model_name") and self._device.model_name:
-            self._attr_device_info["model"] = self._device.model_name
-        elif self._device.last_status:
-            status = self._device.last_status
-            if "sysProductName" in status:
-                self._attr_device_info["model"] = status["sysProductName"]
-            elif "sysProductId" in status:
-                self._attr_device_info["model"] = status["sysProductId"]
-            elif "sysHwVersion" in status:
-                self._attr_device_info["model"] = f"A2 (HW: {status['sysHwVersion']})"
-
     @property
     def available(self) -> bool:
         """Return if the switch is available."""
         for device in self.coordinator.data:
             if device.device_id == self._device.device_id:
                 self._device = device
-                return self.coordinator.last_update_success and self._device.status_available
+                return live_status_available(device)
         return False
 
     @property
@@ -398,10 +358,6 @@ class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEnti
                     "device_name": self._device.friendly_name,
                 },
             )
-
-        self._device.update_solar_status_cache(changes)
-        self.async_write_ha_state()
-        await self.coordinator.async_request_refresh()
 
 
 class AndersenEvBoostSwitch(AndersenEvSolarSwitch):

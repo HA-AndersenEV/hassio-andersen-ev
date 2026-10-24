@@ -28,8 +28,7 @@ def grid_source_kw_to_percent(power_kw: float, max_amps: float) -> int:
 
 def device_max_amps(device: KonnectDevice) -> float | None:
     """Return the charger's configured max current (cfgChargeAmpMax)."""
-    status = device.last_status or {}
-    max_amps = status.get("cfgChargeAmpMax")
+    max_amps = device.live_status.get("cfgChargeAmpMax")
     if not max_amps:
         return None
     return float(max_amps)
@@ -40,7 +39,7 @@ def effective_max_amps(device: KonnectDevice) -> float | None:
 
     The app works out grid source power from this, so percentages follow a lowered user max.
     """
-    if amps := device.last_rest_status.get("sysUserMaxChargeAmpSet"):
+    if amps := device.live_status.get("sysUserMaxChargeAmpSet"):
         return float(amps)
     return device_max_amps(device)
 

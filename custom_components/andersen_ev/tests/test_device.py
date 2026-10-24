@@ -219,13 +219,6 @@ class TestDeviceGraphQLCalls:
         mock_api.getDevice.assert_awaited_once_with("test_device_123")
         assert mock_device.last_rest_status == {"sysUserMaxChargeAmpSet": 24}
 
-    def test_update_rest_status_cache(self, mock_device: KonnectDevice) -> None:
-        """Locally applied changes are merged into the REST status, even before the first fetch."""
-        mock_device.update_rest_status_cache({"sysUserMaxChargeAmpSet": 10})
-        mock_device.update_rest_status_cache({"cfgChargeAmpMax": 32})
-
-        assert mock_device.last_rest_status == {"sysUserMaxChargeAmpSet": 10, "cfgChargeAmpMax": 32}
-
     @pytest.mark.asyncio
     async def test_stop_charging(self, mock_device, graphql_command_success_response):
         """Stop charging sends userForceStop then stopChargeNow, as the app does."""
@@ -302,7 +295,7 @@ class TestDeviceGraphQLCalls:
                         "solarOverride": False,
                         "solarChargeAlways": True,
                         "solarMaxGridChargePercent": 50,
-                        "sysScheduleLock": True,
+                        "chargeOutsideSchedules": False,
                         "online": True,
                     }
                 }
@@ -341,14 +334,15 @@ class TestDeviceGraphQLCalls:
         assert solar["solarChargeOutsideSchedules"] is None
 
     @pytest.mark.asyncio
-    async def test_get_solar_charge_outside_schedules_is_inverse_of_schedule_lock(self, mock_device):
+    async def test_get_solar_charge_outside_schedules_ignores_schedule_lock(self, mock_device):
+        """sysScheduleLock also drops during a Charge now session, so only chargeOutsideSchedules is used."""
         mock_device.graphql_client.execute_query = AsyncMock(
-            return_value={"getDevice": {"deviceStatus": {"sysScheduleLock": False}}}
+            return_value={"getDevice": {"deviceStatus": {"sysScheduleLock": False, "chargeOutsideSchedules": False}}}
         )
 
         solar = await mock_device.get_solar()
 
-        assert solar["solarChargeOutsideSchedules"] is True
+        assert solar["solarChargeOutsideSchedules"] is False
 
     def test_update_solar_status_from_device_status(self, mock_device: KonnectDevice) -> None:
         """Solar cache is populated from an already-fetched status without another request."""
@@ -358,7 +352,7 @@ class TestDeviceGraphQLCalls:
                     "solarOverride": True,
                     "solarChargeAlways": False,
                     "solarMaxGridChargePercent": 30,
-                    "sysScheduleLock": False,
+                    "chargeOutsideSchedules": True,
                 }
             )
 

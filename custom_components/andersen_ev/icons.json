@@ -19,7 +19,6 @@
       "charge_power": { "default": "mdi:ev-station" },
       "charge_power_max": { "default": "mdi:speedometer" },
       "solar_power": { "default": "mdi:solar-power" },
-      "grid_power": { "default": "mdi:transmission-tower" },
       "current_charge_energy": { "default": "mdi:car-electric" },
       "current_solar_energy": { "default": "mdi:solar-power-variant" },
       "current_grid_energy": { "default": "mdi:power-plug" },

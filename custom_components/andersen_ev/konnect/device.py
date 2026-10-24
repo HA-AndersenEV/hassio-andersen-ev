@@ -2,10 +2,13 @@
 
 import json
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from . import const
+from .changes import merge_changes
 from .graphql_client import GraphQLClient
+from .subscription import DeviceStatusSubscription
 
 if TYPE_CHECKING:
     from .client import KonnectClient
@@ -30,6 +33,14 @@ class KonnectDevice:
     model_name: str | None = None
     currency: str | None = None
     _graphql_client: GraphQLClient | None = None  # GraphQL client instance
+    _subscription: DeviceStatusSubscription | None = None
+    # Merged deviceStatusUpdated payloads, kept apart from the polled status so a poll can't wipe
+    # subscription-only fields.
+    _last_subscription_status: dict[str, Any] | None = None
+    # Set by the integration's subscription loop.
+    subscription_connected: bool = False
+    subscription_disconnected_since: datetime | None = None
+    last_subscription_update: datetime | None = None
 
     def __init__(self, api, device_id, friendly_name, user_lock):
         """Initialize the device."""
@@ -45,7 +56,11 @@ class KonnectDevice:
         self.model_name = None
         self.currency = None
         self._graphql_client = None
-        self.status_available = True
+        self._subscription = None
+        self._last_subscription_status = None
+        self.subscription_connected = False
+        self.subscription_disconnected_since = None
+        self.last_subscription_update = None
 
     @property
     def last_status(self):
@@ -57,27 +72,35 @@ class KonnectDevice:
         """Return the last known solar status."""
         return self._last_solar_status or {}
 
-    def update_solar_status_cache(self, changes: dict[str, Any]) -> None:
-        """Merge locally applied solar changes into the cached solar status."""
-        if self._last_solar_status is None:
-            self._last_solar_status = {}
-        self._last_solar_status.update(changes)
-
     @property
     def last_rest_status(self) -> dict[str, Any]:
         """Return the status object from the last REST getDevice call."""
         return (self._last_user_device or {}).get("status") or {}
 
-    def update_rest_status_cache(self, changes: dict[str, Any]) -> None:
-        """Merge locally applied changes into the cached REST status."""
-        if self._last_user_device is None:
-            self._last_user_device = {}
-        self._last_user_device.setdefault("status", {}).update(changes)
-
     async def get_user_device(self) -> dict[str, Any]:
         """Fetch and cache the REST getDevice userDevice object."""
         self._last_user_device = await self.api.getDevice(self.device_id)
         return self._last_user_device
+
+    @property
+    def live_status(self) -> dict[str, Any]:
+        """Return the merged subscription status, empty before the first payload."""
+        return self._last_subscription_status or {}
+
+    @property
+    def last_subscription_status(self) -> dict[str, Any] | None:
+        """Return the merged deviceStatusUpdated payloads, or None before the first one."""
+        return self._last_subscription_status
+
+    def apply_subscription_update(self, payload: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
+        """Merge a deviceStatusUpdated payload into the cache and return what changed.
+
+        Changes are keyed by field name, with nested fields dotted (``chargeStatus.chargePower``),
+        and map to ``(old, new)``.
+        """
+        if self._last_subscription_status is None:
+            self._last_subscription_status = {}
+        return merge_changes(self._last_subscription_status, payload)
 
     @property
     def last_charge(self):
@@ -96,15 +119,40 @@ class KonnectDevice:
             )
         return self._graphql_client
 
-    async def _refresh_graphql_token(self):
+    @property
+    def subscription(self) -> DeviceStatusSubscription:
+        """Lazily create the deviceStatusUpdated subscription on first use."""
+        if self._subscription is None:
+            self._subscription = DeviceStatusSubscription(
+                device_id=self.device_id,
+                token_provider=self._current_token,
+                token_refresh=self._refresh_token,
+            )
+        return self._subscription
+
+    def _current_token(self) -> str:
+        """Return the account's current bearer token."""
+        assert self.api.token is not None, "subscription used before authentication"
+        return self.api.token
+
+    async def _refresh_token(self) -> tuple[str, float | None]:
         """Refresh authentication and return new token with expiry time."""
         await self.api.refresh_token()
-        return self.api.token, getattr(self.api, "token_expiry_time", None)
+        return self._current_token(), getattr(self.api, "token_expiry_time", None)
+
+    async def _refresh_graphql_token(self) -> tuple[str, float | None]:
+        """Refresh for the query client, then move the subscription onto the new token."""
+        token = await self._refresh_token()
+        if self._subscription is not None:
+            await self._subscription.restart()
+        return token
 
     async def close(self):
-        """Clean up the GraphQL client resources."""
+        """Clean up the GraphQL client and subscription."""
         if self._graphql_client is not None:
             await self._graphql_client.close()
+        if self._subscription is not None:
+            await self._subscription.close()
 
     async def reset_rcm(self):
         """Reset RCM fault on the device."""
@@ -435,13 +483,12 @@ class KonnectDevice:
 
     def update_solar_status_from_device_status(self, status: dict[str, Any]) -> dict[str, Any]:
         """Populate the solar settings cache from an already-fetched device status."""
-        # The API only exposes this as sysScheduleLock, which is the inverse of "charge outside schedule".
-        schedule_lock = status.get("sysScheduleLock")
         self._last_solar_status = {
             "boost": status.get("solarOverride"),
             "solarChargeAlways": status.get("solarChargeAlways"),
             "solarMaxGridChargePercent": status.get("solarMaxGridChargePercent"),
-            "solarChargeOutsideSchedules": None if schedule_lock is None else not schedule_lock,
+            # Not sysScheduleLock: that also drops while a Charge now session overrides a schedule.
+            "solarChargeOutsideSchedules": status.get("chargeOutsideSchedules"),
         }
         self._remember_grid_charge_percent(status.get("solarMaxGridChargePercent"))
         return self._last_solar_status
@@ -463,12 +510,14 @@ class KonnectDevice:
         Only the provided (non-None) parameters are sent to the API.
         """
         _LOGGER.debug(
-            "Setting solar options for device %s (%s): boost=%s, charge_always=%s, max_grid_charge_percent=%s",
+            "Setting solar options for device %s (%s): boost=%s, charge_always=%s, max_grid_charge_percent=%s, "
+            "charge_outside_schedules=%s",
             self.device_id,
             self.friendly_name,
             boost,
             charge_always,
             max_grid_charge_percent,
+            charge_outside_schedules,
         )
 
         fields: dict[str, object] = {}

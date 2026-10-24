@@ -55,7 +55,6 @@
       "charge_power": { "name": "Charge Power" },
       "charge_power_max": { "name": "Max Charge Power" },
       "solar_power": { "name": "Solar Power" },
-      "grid_power": { "name": "Grid Power" },
       "current_charge_energy": { "name": "Current Session Energy" },
       "current_solar_energy": { "name": "Current Session Solar Energy" },
       "current_grid_energy": { "name": "Current Session Grid Energy" },

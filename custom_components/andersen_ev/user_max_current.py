@@ -25,10 +25,10 @@ def nearest_allowed_amps_for_kw(power_kw: float, allowed: list[int]) -> int:
 
 
 def user_max_amps(device: KonnectDevice) -> float | None:
-    """Return the user max charge current from the REST status.
+    """Return the user max charge current from the live status.
 
     Falls back to the installer limit when it isn't set, as the app does.
     """
-    if not device.last_rest_status:
+    if not device.live_status:
         return None
     return effective_max_amps(device)
