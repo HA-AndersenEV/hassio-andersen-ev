@@ -9,7 +9,9 @@ from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
+from andersen_ev.charge_status import CHARGE_STATUS_OPTIONS
 from andersen_ev.sensor import (
+    AndersenEvChargerStatusSensor,
     AndersenEvChargeStatusSensor,
     AndersenEvConnectorSensor,
     AndersenEvCostSensor,
@@ -37,6 +39,7 @@ def _make_device(
     device.device_id = device_id
     device.friendly_name = friendly_name
     device.live_status = live_status or {}
+    device.last_rest_info = {}
     device.subscription_disconnected_since = disconnected_since
     device.last_charge = last_charge
     device.currency = currency
@@ -69,10 +72,11 @@ class TestAsyncSetupEntry:
         await async_setup_entry(MagicMock(), entry, async_add_entities)
 
         entities = async_add_entities.call_args.args[0]
-        assert len(entities) == 44
+        assert len(entities) == 46
         assert sum(isinstance(e, AndersenEvEnergySensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvCostSensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvConnectorSensor) for e in entities) == 2
+        assert sum(isinstance(e, AndersenEvChargerStatusSensor) for e in entities) == 2
         assert sum(isinstance(e, AndersenEvChargeStatusSensor) for e in entities) == 12
         assert sum(isinstance(e, AndersenEvLiveSensor) for e in entities) == 14
         assert sum(isinstance(e, AndersenEvSolarPowerSensor) for e in entities) == 2
@@ -113,7 +117,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 22
+        assert len(new_entities) == 23
         assert all(entity._device.device_id == "device_2" for entity in new_entities)
 
     @pytest.mark.asyncio
@@ -154,7 +158,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 22
+        assert len(new_entities) == 23
         assert all(entity._device.device_id == "device_1" for entity in new_entities)
 
 
@@ -408,6 +412,59 @@ class TestCostSensorCurrency:
         await sensor.async_added_to_hass()
 
         assert sensor.native_unit_of_measurement == "USD"
+
+
+class TestChargerStatusSensor:
+    """Tests for AndersenEvChargerStatusSensor."""
+
+    def test_entity_description(self) -> None:
+        device = _make_device()
+        sensor = AndersenEvChargerStatusSensor(_make_coordinator([device]), device)
+
+        assert sensor.unique_id == "device_1_charge_status"
+        assert sensor.translation_key == "charge_status"
+        assert sensor.device_class == SensorDeviceClass.ENUM
+        assert sensor.options == CHARGE_STATUS_OPTIONS
+
+    def test_unknown_before_live_status(self) -> None:
+        device = _make_device()
+        sensor = AndersenEvChargerStatusSensor(_make_coordinator([device]), device)
+
+        assert sensor.native_value is None
+
+    @pytest.mark.parametrize(
+        ("status", "info", "expected"),
+        [
+            pytest.param({"evseState": 3}, {}, "charging", id="charging"),
+            pytest.param({"evseState": 255, "sysPlugged": True, "sysForceStop": True}, {}, "stopped", id="stopped"),
+            pytest.param({"evseState": 255, "online": False}, {}, "offline", id="offline"),
+            pytest.param(
+                {"evseState": 3, "sysFwVersion": 520},
+                {"NotifiedDeviceOfflineAt": "2026-10-21T10:00:00.000Z"},
+                "offline",
+                id="offline_from_rest_info",
+            ),
+        ],
+    )
+    def test_native_value(self, status: dict, info: dict, expected: str) -> None:
+        device = _make_device(live_status={"online": True, "lastEvent": dt_util.utcnow().isoformat(), **status})
+        device.last_rest_info = info
+        sensor = AndersenEvChargerStatusSensor(_make_coordinator([device]), device)
+
+        assert sensor.native_value == expected
+
+    @pytest.mark.parametrize(
+        ("disconnected_since", "expected"),
+        [
+            pytest.param(None, True, id="connected"),
+            pytest.param(DISCONNECTED_LONG_AGO, False, id="disconnected"),
+        ],
+    )
+    def test_available(self, disconnected_since: datetime | None, expected: bool) -> None:
+        device = _make_device(disconnected_since=disconnected_since)
+        sensor = AndersenEvChargerStatusSensor(_make_coordinator([device]), device)
+
+        assert sensor.available is expected
 
 
 class TestConnectorSensorInit:

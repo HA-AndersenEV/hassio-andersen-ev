@@ -126,8 +126,9 @@ See [Features](#features) above, [ENTITIES.md](ENTITIES.md) for the full entity 
   screen.
 * **User max power** and **user max current** numbers to limit the charge rate, mirroring the app's
   power settings (`userAmpSet`).
-* **Sensors** for energy, cost, live grid/solar/charge power, voltage, temperature, fault code and
-  connector state, sourced from the charger's live status and its charge history.
+* **Sensors** for energy, cost, live grid/solar/charge power, voltage, temperature, fault code,
+  connector state and the app's charge status badge, sourced from the charger's live status and its
+  charge history.
 * **Services** to disable all schedules, reset an RCM fault, and pull a one-off detailed device
   info/status snapshot into the UI.
 
