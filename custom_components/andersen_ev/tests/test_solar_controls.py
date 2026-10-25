@@ -1,11 +1,13 @@
 """Tests for Andersen EV solar control entities."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.const import UnitOfPower
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
+from homeassistant.util import dt as dt_util
 
 from andersen_ev.grid_source import (
     amps_to_kw,
@@ -46,13 +48,12 @@ def mock_device():
     device.device_id = "test_device_123"
     device.friendly_name = "Test Charger"
     device.user_lock = False
-    device.status_available = True
-    device.last_status = {
+    device.subscription_disconnected_since = None
+    device.live_status = {
         "sysProductName": "Andersen A2",
         "sysHwVersion": "1.0",
         "cfgChargeAmpMax": 32,
     }
-    device.last_rest_status = {}
     device._last_solar_status = {
         "boost": False,
         "solarChargeAlways": False,
@@ -60,7 +61,6 @@ def mock_device():
         "solarMaxGridChargePercent": 50,
     }
     device.last_solar_status = device._last_solar_status
-    device.update_solar_status_cache.side_effect = device._last_solar_status.update
     device.last_grid_charge_percent = None
     device.set_solar = AsyncMock(return_value=True)
     device.model_name = "Andersen A2"
@@ -102,7 +102,7 @@ class TestAndersenEvBoostSwitch:
         await switch.async_turn_on()
 
         mock_device.set_solar.assert_called_once_with(boost=True)
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_boost_switch_turn_off(self, mock_coordinator, mock_device):
@@ -115,7 +115,7 @@ class TestAndersenEvBoostSwitch:
         await switch.async_turn_off()
 
         mock_device.set_solar.assert_called_once_with(boost=False)
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_boost_switch_unique_id(self, mock_coordinator, mock_device):
@@ -154,14 +154,14 @@ class TestAndersenEvSolarChargeAlwaysSwitch:
             await switch.async_turn_on()
 
         mock_device.set_solar.assert_called_once_with(charge_always=True, max_grid_charge_percent=expected_percent)
-        assert mock_device._last_solar_status["solarChargeAlways"] is True
-        assert mock_device._last_solar_status["solarMaxGridChargePercent"] == expected_percent
+        # Shown only once the subscription reports it.
+        assert mock_device._last_solar_status["solarChargeAlways"] is False
 
     @pytest.mark.asyncio
     async def test_turn_on_minimum_follows_user_max(self, mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
         """The 1.4 kW minimum is a percent of the user max power (3.6 kW at 16 A)."""
         mock_coordinator.data = [mock_device]
-        mock_device.last_rest_status = {"sysUserMaxChargeAmpSet": 16}
+        mock_device.live_status["sysUserMaxChargeAmpSet"] = 16
 
         switch = AndersenEvSolarChargeAlwaysSwitch(mock_coordinator, mock_device)
         switch.hass = mock_coordinator.hass
@@ -182,14 +182,13 @@ class TestAndersenEvSolarChargeAlwaysSwitch:
             await switch.async_turn_off()
 
         mock_device.set_solar.assert_called_once_with(charge_always=False, max_grid_charge_percent=0)
-        assert mock_device._last_solar_status["solarChargeAlways"] is False
-        assert mock_device._last_solar_status["solarMaxGridChargePercent"] == 0
+        assert mock_device._last_solar_status["solarChargeAlways"] is True
 
     @pytest.mark.asyncio
     async def test_turn_on_without_max_amps(self, mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
         """Nothing is sent when the minimum percent can't be worked out."""
         mock_coordinator.data = [mock_device]
-        mock_device.last_status = {}
+        mock_device.live_status = {}
 
         switch = AndersenEvSolarChargeAlwaysSwitch(mock_coordinator, mock_device)
         await switch.async_turn_on()
@@ -271,21 +270,18 @@ def test_amps_to_kw(max_amps: float, expected_kw: float) -> None:
 
 
 @pytest.mark.parametrize(
-    ("rest_status", "last_status", "expected"),
+    ("live_status", "expected"),
     [
-        pytest.param({"sysUserMaxChargeAmpSet": 16}, {"cfgChargeAmpMax": 32}, 16, id="user_max"),
-        pytest.param({"sysUserMaxChargeAmpSet": None}, {"cfgChargeAmpMax": 32}, 32, id="null_user_max"),
-        pytest.param({"sysUserMaxChargeAmpSet": 0}, {"cfgChargeAmpMax": 32}, 32, id="zero_user_max"),
-        pytest.param({}, {"cfgChargeAmpMax": 32}, 32, id="no_rest_data"),
-        pytest.param({}, {}, None, id="neither_known"),
+        pytest.param({"sysUserMaxChargeAmpSet": 16, "cfgChargeAmpMax": 32}, 16, id="user_max"),
+        pytest.param({"sysUserMaxChargeAmpSet": None, "cfgChargeAmpMax": 32}, 32, id="null_user_max"),
+        pytest.param({"sysUserMaxChargeAmpSet": 0, "cfgChargeAmpMax": 32}, 32, id="zero_user_max"),
+        pytest.param({"cfgChargeAmpMax": 32}, 32, id="no_user_max"),
+        pytest.param({}, None, id="neither_known"),
     ],
 )
-def test_effective_max_amps(
-    mock_device: MagicMock, rest_status: dict, last_status: dict, expected: float | None
-) -> None:
+def test_effective_max_amps(mock_device: MagicMock, live_status: dict, expected: float | None) -> None:
     """Grid source power uses the user max, falling back to the installer limit."""
-    mock_device.last_rest_status = rest_status
-    mock_device.last_status = last_status
+    mock_device.live_status = live_status
 
     assert effective_max_amps(mock_device) == expected
 
@@ -321,17 +317,17 @@ class TestAndersenEvGridSourcePowerNumber:
         assert number.native_value == 5.4
 
     @pytest.mark.parametrize(
-        ("last_status", "percent"),
+        ("live_status", "percent"),
         [
             pytest.param({"sysHwVersion": "1.0"}, 50, id="no_max_amps"),
             pytest.param({"cfgChargeAmpMax": 32}, None, id="no_percent"),
         ],
     )
     @pytest.mark.asyncio
-    async def test_value_unknown(self, mock_coordinator, mock_device, last_status, percent):
+    async def test_value_unknown(self, mock_coordinator, mock_device, live_status, percent):
         """Test the value is unknown without both the percent and max amps."""
         mock_coordinator.data = [mock_device]
-        mock_device.last_status = last_status
+        mock_device.live_status = live_status
         mock_device._last_solar_status["solarMaxGridChargePercent"] = percent
 
         number = AndersenEvGridSourcePowerNumber(mock_coordinator, mock_device)
@@ -361,9 +357,8 @@ class TestAndersenEvGridSourcePowerNumber:
         mock_device.set_solar.assert_called_once_with(
             charge_always=charge_always, max_grid_charge_percent=expected_percent
         )
-        assert mock_device._last_solar_status["solarMaxGridChargePercent"] == expected_percent
-        assert mock_device._last_solar_status["solarChargeAlways"] is charge_always
-        mock_coordinator.async_request_refresh.assert_called_once()
+        assert mock_device._last_solar_status["solarMaxGridChargePercent"] == 50
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_set_value_below_minimum_logs_warning(self, mock_coordinator, mock_device, caplog):
@@ -381,7 +376,7 @@ class TestAndersenEvGridSourcePowerNumber:
     async def test_set_value_without_max_amps(self, mock_coordinator, mock_device):
         """Test nothing is written when max amps is unknown."""
         mock_coordinator.data = [mock_device]
-        mock_device.last_status = {}
+        mock_device.live_status = {}
 
         number = AndersenEvGridSourcePowerNumber(mock_coordinator, mock_device)
         await number.async_set_native_value(3.6)
@@ -401,7 +396,7 @@ class TestAndersenEvGridSourcePowerNumber:
     async def test_follows_user_max(self, mock_coordinator: MagicMock, mock_device: MagicMock) -> None:
         """With a 16 A user max, percentages are of 3.6 kW rather than the installer's 7.2 kW."""
         mock_coordinator.data = [mock_device]
-        mock_device.last_rest_status = {"sysUserMaxChargeAmpSet": 16}
+        mock_device.live_status["sysUserMaxChargeAmpSet"] = 16
         mock_device._last_solar_status["solarMaxGridChargePercent"] = 50
 
         number = AndersenEvGridSourcePowerNumber(mock_coordinator, mock_device)
@@ -462,15 +457,27 @@ def test_solar_entity_name_comes_from_translation(
 
 
 @pytest.mark.parametrize("entity_class", SOLAR_ENTITY_CLASSES)
-@pytest.mark.parametrize("status_available", [True, False])
-def test_solar_entity_available_follows_device_status(
-    mock_coordinator: MagicMock, mock_device: MagicMock, entity_class: type, status_available: bool
+@pytest.mark.parametrize(
+    ("disconnected_for", "available"),
+    [
+        pytest.param(None, True, id="connected"),
+        pytest.param(timedelta(minutes=6), False, id="disconnected_over_five_minutes"),
+    ],
+)
+def test_solar_entity_available_follows_live_status(
+    mock_coordinator: MagicMock,
+    mock_device: MagicMock,
+    entity_class: type,
+    disconnected_for: timedelta | None,
+    available: bool,
 ) -> None:
-    """A failed per-device status fetch makes the entity unavailable even though the refresh succeeded."""
+    """The entity goes unavailable once the subscription has been down for five minutes."""
     mock_coordinator.data = [mock_device]
-    mock_device.status_available = status_available
+    mock_device.subscription_disconnected_since = (
+        None if disconnected_for is None else dt_util.utcnow() - disconnected_for
+    )
 
-    assert entity_class(mock_coordinator, mock_device).available is status_available
+    assert entity_class(mock_coordinator, mock_device).available is available
 
 
 @pytest.mark.parametrize("entity_class", SOLAR_ENTITY_CLASSES)

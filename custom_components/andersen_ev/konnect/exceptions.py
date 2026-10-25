@@ -15,3 +15,7 @@ class AndersenConnectionError(AndersenError):
 
 class AndersenApiError(AndersenError):
     """Raised when the API response shape is unexpected."""
+
+
+class AndersenSubscriptionError(AndersenError):
+    """Raised when the live status subscription is refused or drops."""

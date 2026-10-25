@@ -1,11 +1,14 @@
 """Tests for the Andersen EV user max charge current and power numbers."""
 
+import logging
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.components.number import NumberDeviceClass
 from homeassistant.const import UnitOfElectricCurrent, UnitOfPower
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from andersen_ev.konnect.exceptions import AndersenConnectionError
 from andersen_ev.number import AndersenEvUserMaxCurrentNumber, AndersenEvUserMaxPowerNumber
@@ -34,10 +37,8 @@ def mock_device(mock_coordinator: MagicMock) -> MagicMock:
     device = MagicMock()
     device.device_id = "test_device_123"
     device.friendly_name = "Test Charger"
-    device.status_available = True
-    device.last_status = {"cfgChargeAmpMax": 32}
-    device.last_rest_status = {"sysUserMaxChargeAmpSet": 16}
-    device.update_rest_status_cache.side_effect = device.last_rest_status.update
+    device.subscription_disconnected_since = None
+    device.live_status = {"cfgChargeAmpMax": 32, "sysUserMaxChargeAmpSet": 16}
     device.set_user_max_amps = AsyncMock(return_value=True)
     mock_coordinator.data = [device]
     return device
@@ -89,31 +90,35 @@ def test_nearest_allowed_amps_for_kw(power_kw: float, allowed: list[int], expect
 
 
 @pytest.mark.parametrize(
-    ("rest_status", "expected_amps", "expected_kw"),
+    ("live_status", "expected_amps", "expected_kw"),
     [
-        pytest.param({"sysUserMaxChargeAmpSet": 16}, 16, 3.6, id="user_set"),
-        pytest.param({"sysUserMaxChargeAmpSet": 10}, 10, 2.3, id="minimum"),
-        pytest.param({"sysUserMaxChargeAmpSet": None}, 32, 7.2, id="null_falls_back_to_installer_limit"),
-        pytest.param({"sysUserMaxChargeAmpSet": 0}, 32, 7.2, id="zero_falls_back_to_installer_limit"),
-        pytest.param({}, None, None, id="no_rest_data"),
+        pytest.param({"cfgChargeAmpMax": 32, "sysUserMaxChargeAmpSet": 16}, 16, 3.6, id="user_set"),
+        pytest.param({"cfgChargeAmpMax": 32, "sysUserMaxChargeAmpSet": 10}, 10, 2.3, id="minimum"),
+        pytest.param(
+            {"cfgChargeAmpMax": 32, "sysUserMaxChargeAmpSet": None}, 32, 7.2, id="null_falls_back_to_installer_limit"
+        ),
+        pytest.param(
+            {"cfgChargeAmpMax": 32, "sysUserMaxChargeAmpSet": 0}, 32, 7.2, id="zero_falls_back_to_installer_limit"
+        ),
+        pytest.param({}, None, None, id="before_first_payload"),
     ],
 )
 def test_native_value(
     mock_coordinator: MagicMock,
     mock_device: MagicMock,
-    rest_status: dict,
+    live_status: dict,
     expected_amps: float | None,
     expected_kw: float | None,
 ) -> None:
-    """Both entities show the REST sysUserMaxChargeAmpSet, in A and kW."""
-    mock_device.last_rest_status = rest_status
+    """Both entities show the live sysUserMaxChargeAmpSet, in A and kW."""
+    mock_device.live_status = live_status
 
     assert AndersenEvUserMaxCurrentNumber(mock_coordinator, mock_device).native_value == expected_amps
     assert AndersenEvUserMaxPowerNumber(mock_coordinator, mock_device).native_value == expected_kw
 
 
 @pytest.mark.parametrize(
-    ("last_status", "expected_max_amps", "expected_max_kw"),
+    ("live_status", "expected_max_amps", "expected_max_kw"),
     [
         pytest.param({"cfgChargeAmpMax": 32}, 32, 7.2, id="32A_install"),
         pytest.param({"cfgChargeAmpMax": 20}, 16, 3.6, id="20A_install"),
@@ -124,12 +129,12 @@ def test_native_value(
 def test_min_max(
     mock_coordinator: MagicMock,
     mock_device: MagicMock,
-    last_status: dict,
+    live_status: dict,
     expected_max_amps: float,
     expected_max_kw: float,
 ) -> None:
     """The maximum is the highest allowed current within the installer limit."""
-    mock_device.last_status = last_status
+    mock_device.live_status = live_status
     current = AndersenEvUserMaxCurrentNumber(mock_coordinator, mock_device)
     power = AndersenEvUserMaxPowerNumber(mock_coordinator, mock_device)
 
@@ -138,13 +143,13 @@ def test_min_max(
 
 
 @pytest.mark.parametrize(
-    ("entity_class", "value", "last_status", "expected_amps"),
+    ("entity_class", "value", "unit", "live_status", "expected_amps"),
     [
-        pytest.param(AndersenEvUserMaxCurrentNumber, 24, {"cfgChargeAmpMax": 32}, 24, id="current_allowed"),
-        pytest.param(AndersenEvUserMaxCurrentNumber, 20, {"cfgChargeAmpMax": 32}, 16, id="current_rounded"),
-        pytest.param(AndersenEvUserMaxCurrentNumber, 32, {"cfgChargeAmpMax": 20}, 16, id="current_capped"),
-        pytest.param(AndersenEvUserMaxPowerNumber, 5.0, {"cfgChargeAmpMax": 32}, 24, id="power_rounded"),
-        pytest.param(AndersenEvUserMaxPowerNumber, 7.2, {"cfgChargeAmpMax": 24}, 24, id="power_capped"),
+        pytest.param(AndersenEvUserMaxCurrentNumber, 24, "A", {"cfgChargeAmpMax": 32}, 24, id="current_allowed"),
+        pytest.param(AndersenEvUserMaxCurrentNumber, 20, "A", {"cfgChargeAmpMax": 32}, 16, id="current_rounded"),
+        pytest.param(AndersenEvUserMaxCurrentNumber, 32, "A", {"cfgChargeAmpMax": 20}, 16, id="current_capped"),
+        pytest.param(AndersenEvUserMaxPowerNumber, 5.0, "kW", {"cfgChargeAmpMax": 32}, 24, id="power_rounded"),
+        pytest.param(AndersenEvUserMaxPowerNumber, 7.2, "kW", {"cfgChargeAmpMax": 24}, 24, id="power_capped"),
     ],
 )
 @pytest.mark.asyncio
@@ -153,24 +158,31 @@ async def test_set_value_sends_allowed_amps(
     mock_device: MagicMock,
     entity_class: type,
     value: float,
-    last_status: dict,
+    unit: str,
+    live_status: dict,
     expected_amps: int,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Setting either entity sends the allowed current and updates both entities from the cache."""
-    mock_device.last_status = last_status
+    """Setting either entity sends the allowed current; the value changes only when the subscription reports it."""
+    caplog.set_level(logging.DEBUG, logger="andersen_ev.number")
+    mock_device.live_status = live_status
     entity = entity_class(mock_coordinator, mock_device)
 
     await entity.async_set_native_value(value)
 
     mock_device.set_user_max_amps.assert_awaited_once_with(expected_amps)
-    assert mock_device.last_rest_status["sysUserMaxChargeAmpSet"] == expected_amps
-    mock_coordinator.async_update_listeners.assert_called_once()
-    mock_coordinator.async_request_refresh.assert_awaited_once()
+    assert (
+        f"Requested {value} {unit} for Test Charger, setting user max charge current to {expected_amps} A"
+        in caplog.text
+    )
+    assert "sysUserMaxChargeAmpSet" not in mock_device.live_status
+    mock_coordinator.async_update_listeners.assert_not_called()
+    mock_coordinator.async_request_refresh.assert_not_awaited()
 
 
 @pytest.mark.parametrize("entity_class", [AndersenEvUserMaxCurrentNumber, AndersenEvUserMaxPowerNumber])
 @pytest.mark.parametrize(
-    ("last_status", "set_user_max_amps", "translation_key"),
+    ("live_status", "set_user_max_amps", "translation_key"),
     [
         pytest.param({}, AsyncMock(return_value=True), "user_max_current_limit_unknown", id="limit_unknown"),
         pytest.param(
@@ -190,12 +202,12 @@ async def test_set_value_failure_raises(
     mock_coordinator: MagicMock,
     mock_device: MagicMock,
     entity_class: type,
-    last_status: dict,
+    live_status: dict,
     set_user_max_amps: AsyncMock,
     translation_key: str,
 ) -> None:
-    """A write that can't be made or isn't applied is reported and leaves the cache untouched."""
-    mock_device.last_status = last_status
+    """A write that can't be made or isn't applied is reported to the caller."""
+    mock_device.live_status = live_status
     mock_device.set_user_max_amps = set_user_max_amps
     entity = entity_class(mock_coordinator, mock_device)
 
@@ -203,7 +215,6 @@ async def test_set_value_failure_raises(
         await entity.async_set_native_value(10)
 
     assert exc_info.value.translation_key == translation_key
-    assert mock_device.last_rest_status == {"sysUserMaxChargeAmpSet": 16}
     mock_coordinator.async_request_refresh.assert_not_awaited()
 
 
@@ -251,11 +262,23 @@ def test_entity_description(
 
 
 @pytest.mark.parametrize("entity_class", [AndersenEvUserMaxCurrentNumber, AndersenEvUserMaxPowerNumber])
-@pytest.mark.parametrize("status_available", [True, False])
-def test_available_follows_device_status(
-    mock_coordinator: MagicMock, mock_device: MagicMock, entity_class: type, status_available: bool
+@pytest.mark.parametrize(
+    ("disconnected_for", "available"),
+    [
+        pytest.param(None, True, id="connected"),
+        pytest.param(timedelta(minutes=6), False, id="disconnected_over_five_minutes"),
+    ],
+)
+def test_available_follows_live_status(
+    mock_coordinator: MagicMock,
+    mock_device: MagicMock,
+    entity_class: type,
+    disconnected_for: timedelta | None,
+    available: bool,
 ) -> None:
-    """A failed per-device status fetch makes the entity unavailable."""
-    mock_device.status_available = status_available
+    """The entity goes unavailable once the subscription has been down for five minutes."""
+    mock_device.subscription_disconnected_since = (
+        None if disconnected_for is None else dt_util.utcnow() - disconnected_for
+    )
 
-    assert entity_class(mock_coordinator, mock_device).available is status_available
+    assert entity_class(mock_coordinator, mock_device).available is available

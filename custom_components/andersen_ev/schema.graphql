@@ -1,22 +1,510 @@
-"""
-Andersen EV GraphQL API schema.
+directive @auth(requires: Role = ADMIN) on OBJECT | FIELD_DEFINITION
 
-Client-side type definitions derived from the Andersen EV Konnect API.
-Used by the gql DSLSchema for type-safe dynamic query building.
-"""
+directive @deviceOwner on OBJECT | FIELD_DEFINITION
 
-scalar Date
+directive @chargeRateOwner on OBJECT | FIELD_DEFINITION
 
-enum LogsGroupedBy {
-  HOUR
-  DAY
-  WEEK
-  MONTH
+directive @emailOwner on OBJECT | FIELD_DEFINITION
+
+type Query {
+  getCustomPaymentToken(opportunityId: String!, invoiceNumber: String!): String
+  getAdminConfig: AdminConfig
+  getSupportMessage: String
+
+  """Test query"""
+  getTest: Test
+
+  """Gets a device by id"""
+  getDevice(id: ID!): Device
+
+  """Gets all devices belonging to current user email"""
+  getCurrentUserDevices(fromParticle: Boolean): [Device]
+
+  """Get the deviceId and platform from the deviceName (serial number)"""
+  getDeviceIdBySerial(deviceName: String!): PlatformId
+
+  """Gets all devices belonging to customer email"""
+  getCustomerEmailDevices(email: ID!, fromParticle: Boolean): [Device]
+
+  """Gets customer emails for all particle products"""
+  getCustomers(offset: Int, limit: Int): [CustomerEmail]
+
+  """Gets number of unique particle customer emails"""
+  getCustomerCount: Int
+
+  """Gets a charge rate record"""
+  getChargeRate(id: ID!, deviceId: String): ChargeRate
+
+  """Gets account"""
+  getCurrentAccount: Account
+
+  """Search addresses with address finder"""
+  searchAddress(addressFragment: String!, countryCode: String): AddressFinderData
+
+  """Get a list of all offline devices"""
+  getOfflineDevices: OfflineDevicesResponse!
+
+  """Particle → AWS migration batch (admin / dashboard)"""
+  getMigrationBatch(id: ID!): MigrationBatch
+  listMigrationBatches(limit: Int): [MigrationBatch!]!
 }
 
-# -- Output types ----------------------------------------------------------
+type AdminConfig {
+  supportMessage: String
+}
 
-type DayMap {
+type Test {
+  name: String
+}
+
+"""Particle device"""
+type Device {
+  id: ID!
+  name: String
+  email: String
+  last_ip_address: String
+  last_handshake_at: Date
+  customer_id: String
+  product_id: String
+  serial_number: String
+  platform: String
+
+  """Device variables from their most recent event"""
+  deviceStatus: DeviceStatus
+
+  """Device info stored outside of particle"""
+  deviceInfo: DeviceInfo
+
+  """Device charge logs"""
+  deviceCalculatedPowerLogsBinned(dateFrom: Date, dateTo: Date, binnedMinutes: Int, groupBy: LogsGroupedBy, limit: Int, offset: Int, includeStartTimes: Boolean): JSON
+  deviceCalculatedChargeLogs(minEnergy: Float, limit: Int, offset: Int, dateFrom: Date, dateTo: Date, ascending: Boolean): [DeviceCalculatedChargeLog]
+
+  """Device charge rates"""
+  deviceChargeRates: [ChargeRate]
+
+  """List of users who have been requested to share"""
+  shared_customers: [SharedCustomer!]
+
+  """Unit information"""
+  unitInfo: UnitInfo
+}
+
+"""Date custom scalar type"""
+scalar Date
+
+"""
+Device variables from their most recent event [Confluence](https://andersen-ev.atlassian.net/wiki/spaces/KP/pages/39485488/AEVSysEvent)
+"""
+type DeviceStatus {
+  id: ID
+  konnectSerial: String
+
+  """Date of the most recent event received"""
+  lastEvent: Date
+  lastEventAge: Int
+
+  """Device online status"""
+  online: Boolean
+
+  """Issued on unit POR"""
+  sysBootup: Int
+
+  """Indicates Particle OS on unit"""
+  sysOs: String
+
+  """Current on-board time"""
+  sysTime: LocalDate
+
+  """Indicates system phase config (Will be 1 or 3)"""
+  sysPhase: String
+
+  """Indicates if solar CT configured unit"""
+  sysSolarCT: Boolean
+
+  """Indicates if grid CT configured unit"""
+  sysGridCT: Boolean
+  sysAdaptiveFuse: Boolean
+  sysSSID: String
+
+  """Wifi RSSI in dBm"""
+  sysRssi: Int
+
+  """Determines WIFI or Ethernet 0 = Wifi, 1 = Ethernet"""
+  sysLan: String
+
+  """System temperature in degrees Celcius"""
+  sysTemperature: Float
+
+  """Memory free in bytes"""
+  sysFreeMemory: Int
+
+  """Indicates run time in seconds"""
+  sysRuntime: Int
+
+  """Indicates unit firmware version"""
+  sysFwVersion: String
+
+  """Indicates unit hardware version"""
+  sysHwVersion: String
+
+  """
+  Indicates product ID code
+  * ANDERSEN_PRODUCT_ID_DONT_KNOW =	0
+  * ANDERSEN_PRODUCT_ID_GEN_ONE =	10
+  * ANDERSEN_PRODUCT_ID_KINGSBRIDGE =	20
+  * ANDERSEN_PRODUCT_ID_THURLESTONE =	30
+  """
+  sysProductId: Int
+
+  """Indicates product name"""
+  sysProductName: String
+
+  """Indicates OTA Update has begun"""
+  sysOtaUpdate: Boolean
+
+  """Indicates user has pressed button"""
+  sysButton: Int
+
+  """Issued when user manually clears RCM fault"""
+  sysRcmUserCleared: String
+
+  """
+  u32 fault code
+  FAULT_CODE_NONE                     0u
+  FAULT_CODE_RCM_TRIP                 BIT(0)
+  FAULT_CODE_RTC_LOST_POWER           BIT(1)
+  FAULT_CODE_RTC                      BIT(2)
+  FAULT_CODE_I2C_SPI                  BIT(3)
+  FAULT_CODE_I2C_GPIO                 BIT(4)
+  FAULT_CODE_EARTH_CT_OP              BIT(5)
+  FAULT_CODE_EARTH_CT_ERROR           BIT(6)
+  FAULT_CODE_ENERGY_METER             BIT(7)
+  FAULT_CODE_EVSE_COMMS               BIT(8)
+  FAULT_CODE_EVSE_VENT_REQUIRED       BIT(9)
+  FAULT_CODE_EVSE_DIODE_CHECK         BIT(10)
+  FAULT_CODE_EVSE_OTHER               BIT(11)
+  FAULT_CODE_TIME_CORRUPT             BIT(12)
+  FAULT_NO_CLOUD_CONNECTION           BIT(13)
+  FAULT_OVERTEMP                      BIT(14)
+  """
+  sysFaultCode: Int
+  sysVoltageA: Float
+  sysVoltageB: Float
+  sysVoltageC: Float
+
+  """Frequency in Hertz (Hz)"""
+  sysFreq: Float
+
+  """Current in Channel A Amps"""
+  sysAmpA: Float
+
+  """Current in Channel B Amps"""
+  sysAmpB: Float
+
+  """Current in Channel C Amps"""
+  sysAmpC: Float
+
+  """Power in Channel A Watts"""
+  sysPowerA: Float
+
+  """Power in Channel B Watts"""
+  sysPowerB: Float
+  sysSolarPower: Float
+
+  """Power in Channel C Watts"""
+  sysPowerC: Float
+  sysGridPower: Float
+  sysChargePower: Float
+
+  """Solar energy in kWh since last reported"""
+  sysSolarEnergyDelta: Float
+
+  """Grid Energy in kWh since last reported"""
+  sysGridEnergyDelta: Float
+
+  """Indicates current schedule enabled"""
+  sysSchEnabled: Boolean
+  sysSchSet: Boolean
+
+  """
+  Indicates schedule 0
+  "120015007F00"
+  12 - Start hour 12 (decimal)
+  00 - Start min 00 (decimal)
+  15 - End hour 15 (decimal)
+  00 - end min 00 (decimal)
+  7F - day of week mask 01111111 (hex)
+  00 - enabled = false (decimal)
+  Day of week mask = | X |Sat|Fri|Thu|Wed|Tue|Mon|Sun|
+  """
+  sysSch0: String
+
+  """Indicates schedule 1"""
+  sysSch1: String
+
+  """Indicates schedule 2"""
+  sysSch2: String
+
+  """Indicates schedule 3"""
+  sysSch3: String
+
+  """Indicates schedule 4"""
+  sysSch4: String
+
+  """Indicates schedule 5"""
+  sysSch5: String
+
+  """Indicates schedule 6"""
+  sysSch6: String
+
+  """Indicates schedule 7"""
+  sysSch7: String
+
+  """Indicates schedule 8"""
+  sysSch8: String
+
+  """Indicates schedule 9"""
+  sysSch9: String
+
+  """Kaluza schedules"""
+  sysKaluzaSch0: String
+  sysKaluzaSch1: String
+  sysKaluzaSch2: String
+  sysKaluzaSch3: String
+  sysKaluzaSch4: String
+  sysKaluzaSch5: String
+  sysKaluzaSch6: String
+  sysKaluzaSch7: String
+  sysKaluzaSch8: String
+  sysKaluzaSch9: String
+
+  """"""
+  sysSmartPrice: Float
+
+  """"""
+  solarExport: Float
+
+  """"""
+  sysKaluzaChargeRateWatts: Int
+
+  """Device Mode from Kaluza"""
+  sysKaluzaDeviceMode: Int
+
+  """Indicates if charging currently enabled/disabled"""
+  sysChargingEnabled: Boolean
+
+  """Indicates if charging is currently prevented by user"""
+  sysUserLock: Boolean
+
+  """Indicates if charging is currently prevented by schedule"""
+  sysScheduleLock: Boolean
+
+  """Indicates if the vehicle is physically plugged in"""
+  sysPlugged: Boolean
+
+  """Indicates if the user has set schedule boost"""
+  sysSchBoost: Boolean
+
+  """Indicates if the user has set solar boost"""
+  solarBoost: Boolean
+
+  """Indicates if the user has enabled the force stop"""
+  sysForceStop: Boolean
+
+  """Offset of Time Zone from UTC"""
+  cfgTZOffset: Int
+  cfgDSTActive: Boolean
+
+  """
+  Charge / Current Transformer configuration
+  CT_CONFIG_INVALID                       0u
+  CT_CONFIG_SINGLE_PHASE_ONLY             1u
+  CT_CONFIG_SINGLE_PHASE_AND_SOLAR        3u
+  CT_CONFIG_SINGLE_PHASE_AND_AF           5u
+  CT_CONFIG_SINGLE_PHASE_AND_SOLAR_AND_AF 7u
+  CT_CONFIG_THREE_PHASE_ONLY              9u
+  CT_CONFIG_THREE_PHASE_AND_SOLAR         11u
+  CT_CONFIG_THREE_PHASE_AND_AF            13u
+  CT_CONFIG_THREE_PHASE_AND_SOLAR_AND_AF  15u
+  """
+  cfgCTConfig: Int
+  cfgCT1Cali: Int
+  cfgCT2Cali: Int
+  cfgCT3Cali: Int
+
+  """Min charge current limit capability (Amps) - 1-80 (default 5)"""
+  cfgChargeAmpMin: Float
+
+  """Max charge current limit capability (Amps) - 1-80 (default 32)"""
+  cfgChargeAmpMax: Float
+
+  """Number of solar array"""
+  cfgSolarArray: Int
+
+  """Whether or not unit has a solar battery fitted"""
+  cfgSolarBattery: Boolean
+
+  """SysAmpB/C reversed on installation flag"""
+  cfgAmpBReversed: Boolean
+  cfgAmpCReversed: Boolean
+
+  """Max charge current set by the USER (Amps) - 1-80 (default 32)"""
+  userSetChargeAmpMax: Float
+
+  """Allows the unit to charge whenever there is solar"""
+  chargeOutsideSchedules: Boolean
+
+  """
+  Defines the maximum percentage of max charge may be taken from the grid
+  """
+  solarMaxGridChargePercent: Float
+
+  """
+  Defines if no matter what the solarMaxGridChargePercent is we should still charge
+  """
+  solarChargeAlways: Boolean
+
+  """Indicates if solar override is in effect or not"""
+  solarOverride: Boolean
+  cfgAFEnable: Boolean
+  cfgAFAmpMax: Float
+  cfgPENEarthConnected: Boolean
+  cfgDebugEnable: Boolean
+  cfgKrakenUsername: String
+  cfgKrakenPassword: String
+  cfgKrakenServerUrl: String
+  cfgLora0: CfgLora
+  cfgLora1: CfgLora
+  cfgLora2: CfgLora
+  cfgLora3: CfgLora
+
+  """Indicates EVSE micro FW version"""
+  evseFwVersion: String
+
+  """Indicates EVSE micro HW version"""
+  evseHwVersion: String
+
+  """
+  Indicates EVSE state
+  OPENEVSE_STATE_STARTING               0
+  OPENEVSE_STATE_NOT_CONNECTED          1 STATE A
+  OPENEVSE_STATE_CONNECTED              2 STATE B
+  OPENEVSE_STATE_CHARGING               3 STATE C
+  OPENEVSE_STATE_VENT_REQUIRED          4 STATE D
+  OPENEVSE_STATE_DIODE_CHECK_FAILED     5 STATE E
+  OPENEVSE_STATE_GFI_FAULT              6 STATE FF
+  OPENEVSE_STATE_NO_EARTH_GROUND        7 STATE FG
+  OPENEVSE_STATE_STUCK_RELAY            8 STATE FR
+  OPENEVSE_STATE_GFI_SELF_TEST_FAILED   9 STATE FS
+  OPENEVSE_STATE_OVER_TEMPERATURE      10 STATE FT
+  OPENEVSE_STATE_SLEEPING             254 STATE X
+  OPENEVSE_STATE_DISABLED             255 STATE Z
+  """
+  evseState: Int
+
+  """Indicates EVSE response time"""
+  evseResponseTime: Int
+  evseChargeAmpCurrentLimit: Int
+
+  """Indicates start of charge session"""
+  chgSessionStart: String
+
+  """Indicates end of charge session"""
+  chgSessionStop: String
+
+  """AEVChargeEvent Status"""
+  chargeStatus: ChargeStatus
+  scheduleSlots: ScheduleSlots
+  scheduleSlotsArray: [ScheduleSlot]
+  sysSchDSORandom: Int
+  sysUserMaxChargeAmpSet: Int
+  chargeStatusStart: String
+  chargeStatusDuration: Float
+  chargeStatusChargeEnergyTotal: Float
+  chargeStatusSolarEnergyTotal: Float
+  chargeStatusGridEnergyTotal: Float
+  chargeStatusChargePower: Float
+  chargeStatusChargePowerMax: Float
+  chargeStatusSolarPower: Float
+  chargeStatusGridPower: Float
+  sysStatusColour: Int
+  sysPCBVersion: Int
+  sysIsPcb3Phase: Boolean
+  sysUnixTime: Int
+  sysSocketLight: Int
+  sysSocketLocked: Int
+  sysCableType: Int
+  sysSocketLightBrightness: Int
+  sysSocketStatus: Int
+  sysConnectedToParticle: Boolean
+}
+
+"""Local Date custom scalar type"""
+scalar LocalDate
+
+type CfgLora {
+  eui: String
+  type: Int
+  cfg: Int
+  rssi: Int
+  epow: Boolean
+  on: Boolean
+}
+
+type ChargeStatus {
+  """Local time of charge start (2019-12-31T20:16:50Z)"""
+  start: String
+
+  """Running duration of charge (seconds)"""
+  duration: Int
+
+  """Charge energy supplied to vehicle since start (watt/hours)"""
+  chargeEnergyTotal: Float
+
+  """Solar energy supplied since start of charge (kWh)"""
+  solarEnergyTotal: Float
+
+  """Grid energy used since start of charge (kwH)"""
+  gridEnergyTotal: Float
+
+  """Current power supplied to vehicle (watts)"""
+  chargePower: Float
+
+  """Current grid power from CT reading (watts)"""
+  gridPower: Float
+
+  """Current solar power from CT reading (watts)"""
+  solarPower: Float
+
+  """Max power supplied to vehicle (watts)"""
+  chargePowerMax: Float
+}
+
+type ScheduleSlots {
+  sch0: ScheduleSlot
+  sch1: ScheduleSlot
+  sch2: ScheduleSlot
+  sch3: ScheduleSlot
+  sch4: ScheduleSlot
+  sch5: ScheduleSlot
+  sch6: ScheduleSlot
+  sch7: ScheduleSlot
+  sch8: ScheduleSlot
+  sch9: ScheduleSlot
+}
+
+type ScheduleSlot {
+  startHour: Int
+  startMinute: Int
+  endHour: Int
+  endMinute: Int
+
+  """Days for schedule"""
+  dayMap: ScheduleDayMap
+  enabled: Boolean
+}
+
+type ScheduleDayMap {
   monday: Boolean
   tuesday: Boolean
   wednesday: Boolean
@@ -26,191 +514,248 @@ type DayMap {
   sunday: Boolean
 }
 
-type ScheduleSlot {
-  startHour: Int
-  startMinute: Int
-  endHour: Int
-  endMinute: Int
-  enabled: Boolean
-  dayMap: DayMap
-}
-
-type ChargeStatus {
-  start: String
-  chargeEnergyTotal: Float
-  solarEnergyTotal: Float
-  gridEnergyTotal: Float
-  chargePower: Float
-  chargePowerMax: Float
-  solarPower: Float
-  gridPower: Float
-  duration: Int
-}
-
-type LoraConfig {
-  cfg: String
-  epow: String
-  on: Boolean
-  rssi: Float
-  eui: String
-}
-
-type DeviceStatus {
-  id: ID
-  konnectSerial: String
-  online: Boolean
-  lastEvent: String
-  lastEventAge: String
-  evseState: String
-  evseResponseTime: String
-  evseChargeAmpCurrentLimit: Float
-  sysSchEnabled: Boolean
-  sysUserLock: Boolean
-  sysScheduleLock: Boolean
-  sysRssi: Int
-  sysSSID: String
-  sysLan: Boolean
-  sysTemperature: Float
-  sysFreeMemory: Int
-  sysRuntime: Int
-  sysFwVersion: String
-  sysHwVersion: String
-  evseFwVersion: String
-  evseHwVersion: String
-  sysBootup: String
-  sysOs: String
-  sysProductId: String
-  sysProductName: String
-  sysOtaUpdate: String
-  sysRcmUserCleared: Boolean
-  sysButton: String
-  sysFaultCode: String
-  sysVoltageA: Float
-  sysVoltageB: Float
-  sysVoltageC: Float
-  sysAmpA: Float
-  sysAmpB: Float
-  sysAmpC: Float
-  sysPowerA: Float
-  sysPowerB: Float
-  sysPowerC: Float
-  sysPhase: Int
-  sysSolarCT: Float
-  sysGridCT: Float
-  sysAdaptiveFuse: String
-  sysTime: String
-  sysSch0: String
-  sysSch1: String
-  sysSch2: String
-  sysSch3: String
-  sysSch4: String
-  cfgPENEarthConnected: Boolean
-  cfgDebugEnable: Boolean
-  cfgChargeAmpMax: Float
-  cfgChargeAmpMin: Float
-  cfgDSTActive: Boolean
-  sysChargingEnabled: Boolean
-  sysSchSet: String
-  sysSolarPower: Float
-  sysGridPower: Float
-  sysChargePower: Float
-  sysSolarEnergyDelta: Float
-  sysGridEnergyDelta: Float
-  solarMaxGridChargePercent: Int
-  solarChargeAlways: Boolean
-  solarOverride: Boolean
-  cfgAFEnable: Boolean
-  cfgAFAmpMax: Float
-  cfgCTConfig: String
-  chargeStatus: ChargeStatus
-  scheduleSlotsArray: [ScheduleSlot]
-  sysSchDSORandom: String
-  cfgLora0: LoraConfig
-  cfgLora1: LoraConfig
-  cfgLora2: LoraConfig
-  cfgLora3: LoraConfig
-}
-
+"""Device info stored outside of particle"""
 type DeviceInfo {
   id: ID
+  address: String
+  addressCountry: String
+  addressDistrict: String
+  addressLocality: String
+  addressPlace: String
+  addressPostcode: String
+  addressRegion: String
   currency: String
   enableThreePhaseMultiplier: Boolean
   friendlyName: String
-  locationLongitude: Float
+  locationAccuracy: Float
+  locationAltitude: Float
+  locationAltitudeAccuracy: Float
+  locationHeading: Float
   locationLatitude: Float
+  locationLatitudeDelta: Float
+  locationLongitude: Float
+  locationLongitudeDelta: Float
+  locationSpeed: Float
+  loraDevices: JSON
   schedule0Name: String
   schedule1Name: String
   schedule2Name: String
   schedule3Name: String
   schedule4Name: String
-  address: String
-  addressPlace: String
-  addressDistrict: String
-  addressPostcode: String
-  addressCountry: String
+  schedule5Name: String
+  schedule6Name: String
+  schedule7Name: String
+  schedule8Name: String
+  schedule9Name: String
+  schedule0Code: String
+  schedule1Code: String
+  schedule2Code: String
+  schedule3Code: String
+  schedule4Code: String
+  schedule5Code: String
+  schedule6Code: String
+  schedule7Code: String
+  schedule8Code: String
+  schedule9Code: String
+  scheduleDNO: String
+  scheduleDNOActive: Boolean
+  scheduleDNOEnabled: Boolean
+  scheduleRandomEnabled: Boolean
+  solarOverride: Boolean
   solarOverrideStart: String
+  solarMaxGridChargePercent: Int
+  solarChargeAlways: Boolean
+  chargeOutsideSchedules: Boolean
+  timeZoneRegion: String
+  scheduleSlotsArray: [ScheduleSlot]
+  energyCostPeak0: Float
+  energyCostOffPeak0: Float
+  energyCostPeak1: Float
+  energyCostOffPeak1: Float
+  energyCostPeak2: Float
+  energyCostOffPeak2: Float
+  energyCostPeak3: Float
+  energyCostOffPeak3: Float
+  energyCostPeak4: Float
+  energyCostOffPeak4: Float
+  energyCostPeak5: Float
+  energyCostOffPeak5: Float
+  energyCostPeak6: Float
+  energyCostOffPeak6: Float
+  notes: String
+  serialNumber: String
+  type: String
   notifyRcmErrorEnabled: Boolean
+  notifyRcmErrorEmailEnabled: Boolean
   notifyWeeklyReportEnabled: Boolean
   notifyDeviceOfflineEnabled: Boolean
-  purpose: String
-  solarChargeAlways: Boolean
-  timeZoneRegion: String
+  notifySessionComplete: Boolean
+  notifySessionCompleteEmail: Boolean
+  notifySessionStart: Boolean
+  notifySessionStartEmail: Boolean
+  notifyWeeklyReportEmailEnabled: Boolean
+  notifyDeviceOfflineEmailEnabled: Boolean
+  notifiedDeviceOfflineAt: String
+  notifySavings: Boolean
+  notifySavingsEmail: Boolean
+  notifyUpdates: Boolean
+  notifyUpdatesEmail: Boolean
+  purpose: DevicePurpose
   userLock: Boolean
-  loraDevices: String
+  amenityLight: Int
+  motionLight: Int
+  statusLight: Int
+  socketLight: Int
+  offPeakEnd: String
+  offPeakStart: String
+  offPeakRate: Int
+  peakEnd: String
+  peakStart: String
+  peakRate: Int
+  tariffScheduleOverride: Boolean
+  lastCheckedOctopus: String
+  maxChargeRate: Float
+  notifiedSmartSchedulesAt: String
+  notifySmartSchedules: Boolean
+  notifySmartSchedulesEmail: Boolean
+  lastSentActiveFlag: String
+  appVersion: String
+}
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSON
+
+enum DevicePurpose {
+  Personal
+  Business
+}
+
+enum LogsGroupedBy {
+  MINUTE
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+type DeviceCalculatedChargeLog {
+  deviceId: String
+  uuid: ID
+  startDateTimeLocal: LocalDate
+  startDateTime: Date
+  duration: Int
+  chargeEnergyTotal: Float
+  gridEnergyTotal: Float
+  solarEnergyTotal: Float
+  surplusUsedEnergyTotal: Float
+  chargeCostTotal: Float
+  gridCostTotal: Float
+  solarCostTotal: Float
+  surplusUsedCostTotal: Float
+  costTotal: Float
+  particleFwVersion: Int
+  actualChargeCost: Float
+  actualChargeEnergy: Float
+  actualGridEnergy: Float
+  actualSurplusUsed: Float
+  actualGridPower: Float
+  actualSurplusPower: Float
+  actualChargePower: Float
 }
 
 type ChargeRate {
   id: ID
-  price: Float
-  timeStartLocal: String
-  timeStopLocal: String
+  currencyId: String
+
+  """Device coreid"""
+  deviceId: String
   startDateTime: Date
   stopDateTime: Date
+  dayMon: Boolean
+  dayTue: Boolean
+  dayWed: Boolean
+  dayThu: Boolean
+  dayFri: Boolean
+  daySat: Boolean
+  daySun: Boolean
+  timeStartLocal: String
+  timeStopLocal: String
+  price: Float
+  createdAt: Date
+  updatedAt: Date
 }
 
-type ChargeLog {
-  chargeCostTotal: Float
-  chargeEnergyTotal: Float
-  deviceId: String
-  duration: Int
-  gridCostTotal: Float
-  gridEnergyTotal: Float
-  particleFwVersion: String
-  solarEnergyTotal: Float
-  solarCostTotal: Float
-  startDateTimeLocal: String
-  surplusUsedCostTotal: Float
-  surplusUsedEnergyTotal: Float
-  uuid: String
+type SharedCustomer {
+  customerId: String!
+  email: String!
+  status: DeviceSharedStatus!
 }
 
-type Device {
-  id: ID
-  name: String
-  last_ip_address: String
-  last_app: String
-  connected: Boolean
-  return_value: String
-  deviceStatus: DeviceStatus
-  deviceInfo: DeviceInfo
-  deviceChargeRates: [ChargeRate]
-  deviceCalculatedChargeLogs(
-    limit: Int
-    offset: Int
-    minEnergy: Float
-    dateFrom: Date
-  ): [ChargeLog]
-  deviceCalculatedPowerLogsBinned(
-    dateFrom: Date
-    dateTo: Date
-    binnedMinutes: Int
-    groupBy: LogsGroupedBy
-    limit: Int
-    offset: Int
-  ): String
+type DeviceSharedStatus {
+  code: String!
+  role: UserRole!
+  accepted: Boolean!
+}
+
+enum UserRole {
+  Owner
+  User
+  Guest
+}
+
+type UnitInfo {
+  serial: String
+  side: String
+  front: String
+  power: String
+  cable: String
+  colours2024: Boolean
+}
+
+type PlatformId {
+  deviceId: String!
+  platform: String!
+}
+
+"""Customer email and the particle products they exist in"""
+type CustomerEmail {
+  email: ID!
+  particleCustomers: [ParticleCustomer]
+}
+
+"""Customer particle product account"""
+type ParticleCustomer {
+  id: ID!
+  email: String
+  productId: String
+  devices: [Device]
+}
+
+type Account {
+  email: String
+  firstName: String
+  lastName: String
+  phone: String
+  type: String
+  address: Address
 }
 
 type Address {
+  city: String
+  country: String
+  postalCode: String
+  state: String
+  street: String
+}
+
+type AddressFinderData {
+  addresses: [AddressFinderAddress]
+  position: [AddressPositionalData]
+}
+
+type AddressFinderAddress {
   summaryline: String
   subbuildingname: String
   buildingname: String
@@ -220,31 +765,269 @@ type Address {
   posttown: String
   county: String
   postcode: String
+  latitude: Float
+  longitude: Float
 }
 
-type SolarSettings {
-  deviceId: ID
-  override: Boolean
-  chargeAlways: Boolean
-  maxGridChargePercent: Int
-  return_value: Int
+type AddressPositionalData {
+  latitude: Float
+  longitude: Float
 }
 
-type CommandResult {
-  id: ID
+type OfflineDevicesResponse {
+  totalNumberOfDevices: Int!
+  offlineDevices: OfflineDevices!
+  percentageThreshold: Int!
+}
+
+type OfflineDevices {
+  twelveHours: Int!
+  thirtyDays: Int!
+  month: Int!
+}
+
+type MigrationBatch {
+  id: ID!
+
+  """
+  Deploy environment that owns this batch (e.g. staging / production).
+  Prevents cross-environment leakage when Redis/Dynamo are shared.
+  """
+  environment: String
+  status: BatchMigrationStatus!
+  devices: [MigrationDevice!]!
+  logs: [MigrationLogEntry!]!
+  auditTrail: [MigrationAuditEntry!]!
+  notifyEmail: String
+  soundEnabled: Boolean!
+  concurrency: Int!
+  manualStepMode: Boolean!
+  operatorNotes: String!
+  createdAt: String!
+  startedAt: String
+  completedAt: String
+
+  """
+  CSV summary of per-device outcomes (particleId, serial, outcome, reason, step, stepName).
+  Regenerated when the batch finishes; the dashboard also builds a live CSV anytime.
+  """
+  summaryReport: String
+}
+
+enum BatchMigrationStatus {
+  draft
+  running
+  paused
+  completed
+}
+
+type MigrationDevice {
+  deviceId: ID!
+  andersenId: String
+  status: DeviceMigrationStatus!
+  currentStep: MigrationStepKey
+  currentStepIndex: Int!
+  failedStep: MigrationStepKey
+  errorMessage: String
+
+  """
+  Attempts started for the current step (1–3). Reset when the step succeeds.
+  """
+  stepAttempt: Int!
+
+  """
+  ISO timestamp — pending devices are not picked up before this (retry backoff).
+  """
+  nextAttemptAt: String
+  sysFwVersion: Int
+  productId: String
+  platform: String
+  online: Boolean
+  startedAt: String
+  completedAt: String
+  stuckAt: String
+  lastActivityAt: String
+  stepTimings: JSON
+  commandReceipts: JSON
+  particleDisconnectSnapshot: ParticleDisconnectSnapshot
+}
+
+enum DeviceMigrationStatus {
+  pending
+  running
+  completed
+  stuck
+  skipped
+  paused
+  awaiting_continue
+  awaiting_online
+  awaiting_charging
+  already_migrated
+}
+
+enum MigrationStepKey {
+  verify_particle
+  precheck
+  ota_313
+  create_thing
+  verify_aws
+  verify_report
+  disconnect_device
+  ota_314
+  remove_particle
+  verify_final
+}
+
+type ParticleDisconnectSnapshot {
+  n1: JSON
+  sysConnectedToParticle: Boolean
+  particleOnline: Boolean
+  confirmedAt: String!
+}
+
+type MigrationLogEntry {
+  id: ID!
+  timestamp: String!
+  deviceId: String!
+  step: String!
+  level: MigrationLogLevel!
+  message: String!
+  detail: JSON
+}
+
+enum MigrationLogLevel {
+  info
+  warn
+  error
+}
+
+type MigrationAuditEntry {
+  id: ID!
+  timestamp: String!
+  deviceId: String!
+  step: String
+  category: String!
+  action: String!
+  message: String
+  payload: JSON
+}
+
+type Mutation {
+  setAdminConfig(supportMessage: String): AdminConfig
+  registerMobileDevice(token: String!): String
+  unregisterMobileDevice(token: String!): String
+
+  """Claims a particle device"""
+  claimDevice(id: ID!): Device
+
+  """Claims a particle device by name"""
+  claimDeviceByName(deviceName: String!): Device
+  claimDeviceToCustomer(id: ID!, email: String!): Device
+
+  """Loads all customers and devices from particle into the cache"""
+  refreshDeviceList(forCustomerEmail: String): String
+
+  """Creates/Updates device info"""
+  upsertDeviceInfo(deviceId: ID!, address: String, addressCountry: String, addressDistrict: String, addressLocality: String, addressPlace: String, addressPostcode: String, addressRegion: String, currency: String, enableThreePhaseMultiplier: Boolean, friendlyName: String, locationAccuracy: Float, locationAltitude: Float, locationAltitudeAccuracy: Float, locationHeading: Float, locationLatitude: Float, locationLatitudeDelta: Float, locationLongitude: Float, locationLongitudeDelta: Float, locationSpeed: Float, loraDevices: JSON, schedule0Name: String, schedule1Name: String, schedule2Name: String, schedule3Name: String, schedule4Name: String, schedule5Name: String, schedule6Name: String, schedule7Name: String, schedule8Name: String, schedule9Name: String, schedule0Code: String, schedule1Code: String, schedule2Code: String, schedule3Code: String, schedule4Code: String, schedule5Code: String, schedule6Code: String, schedule7Code: String, schedule8Code: String, schedule9Code: String, scheduleDNO: String, scheduleDNOActive: Boolean, scheduleDNOEnabled: Boolean, scheduleRandomEnabled: Boolean, solarOverride: Boolean, solarOverrideStart: String, solarMaxGridChargePercent: Int, solarChargeAlways: Boolean, chargeOutsideSchedules: Boolean, timeZoneRegion: String, energyCostPeak0: Float, energyCostOffPeak0: Float, energyCostPeak1: Float, energyCostOffPeak1: Float, energyCostPeak2: Float, energyCostOffPeak2: Float, energyCostPeak3: Float, energyCostOffPeak3: Float, energyCostPeak4: Float, energyCostOffPeak4: Float, energyCostPeak5: Float, energyCostOffPeak5: Float, energyCostPeak6: Float, energyCostOffPeak6: Float, notes: String, serialNumber: String, type: String, notifyRcmErrorEnabled: Boolean, notifyWeeklyReportEnabled: Boolean, notifyDeviceOfflineEnabled: Boolean, notifySessionComplete: Boolean, notifySessionCompleteEmail: Boolean, notifySessionStart: Boolean, notifySessionStartEmail: Boolean, notifySavings: Boolean, notifySavingsEmail: Boolean, notifyUpdates: Boolean, notifyUpdatesEmail: Boolean, notifyRcmErrorEmailEnabled: Boolean, notifyWeeklyReportEmailEnabled: Boolean, notifyDeviceOfflineEmailEnabled: Boolean, notifiedDeviceOfflineAt: String, notifySocketFault: Boolean, notifySocketFaultEmail: Boolean, notifySocketLock: Boolean, notifySocketLockEmail: Boolean, purpose: DevicePurpose, amenityLight: Int, motionLight: Int, statusLight: Int, offPeakEnd: String, offPeakStart: String, offPeakRate: Int, peakEnd: String, peakStart: String, peakRate: Int, tariffScheduleOverride: Boolean, lastCheckedOctopus: String, maxChargeRate: Float, notifiedSmartSchedulesAt: String, notifySmartSchedules: Boolean, notifySmartSchedulesEmail: Boolean, lastSentActiveFlag: String, appVersion: String): DeviceInfo
+
+  """Calls AEVCommand on a device"""
+  runAEVCommand(deviceId: ID!, functionName: String!, params: String): CallFunctionResponse
+  setSchedules(deviceId: ID!, scheduleSlots: ScheduleSlotsInput!): CallFunctionResponse
+  setAllSchedulesDisabled(deviceId: ID!): CallFunctionResponse
+  setSolar(deviceId: ID!, override: Boolean, chargeAlways: Boolean, chargeOutsideSchedules: Boolean, maxGridChargePercent: Int, solarExport: Int): CallFunctionResponse
+  createChargeRate(deviceId: ID!, startDateTime: Date, stopDateTime: Date, dayMon: Boolean, dayTue: Boolean, dayWed: Boolean, dayThu: Boolean, dayFri: Boolean, daySat: Boolean, daySun: Boolean, timeStartLocal: String, timeStopLocal: String, price: Float!, currencyId: String): ChargeRate
+  updateChargeRate(id: ID!, deviceId: String, currencyId: String, startDateTime: Date, stopDateTime: Date, dayMon: Boolean, dayTue: Boolean, dayWed: Boolean, dayThu: Boolean, dayFri: Boolean, daySat: Boolean, daySun: Boolean, timeStartLocal: String, timeStopLocal: String, price: Float!): Int
+  deleteChargeRate(id: ID!, deviceId: String): Int
+  updateCalculatedChargeSeqs(deviceId: ID!, dateFrom: Date, dateTo: Date): Int
+  updateCalculatedPowerLogs(deviceId: ID!, dateFrom: Date, dateTo: Date): Int
+  upsertAccount(firstName: String, lastName: String, phone: String, shippingAddress1: String, shippingAddress2: String, shippingCity: String, shippingState: String, shippingPostcode: String, shippingCountry: String, agileKey: String, smartTariffAccount: String): String
+  unclaimDevice(deviceId: ID!): Boolean
+  unclaimDeviceForCustomer(deviceId: ID!, customerEmail: String!): Boolean
+  removeShare(customerId: ID!, deviceId: ID!): Boolean
+  editDeviceShare(customerId: ID!, deviceId: ID!, newRole: UserRole!): Boolean
+
+  """Sends request to 'Share' a device"""
+  requestToShareDevice(email: String!, role: UserRole!, deviceId: ID!): Boolean!
+  acceptDeviceShare(code: String!): Boolean!
+  chargeNow(deviceId: ID!, timeToCharge: Int!, gridSupplementInWatts: Int): CallFunctionResponse
+  setOfflinePercentageThreshold(percentageThreshold: Int!): Boolean!
+  removeAllShares(id: ID!): Boolean
+  removeDevicesSharedWithUser(customerId: String!): Boolean
+  setLatestAppUpdates(latestUpdates: AppUpdatesInput!): Boolean
+  setChargerPreferences(serialNumber: String!, front: String, side: String, colours2024: Boolean): Boolean
+
+  """
+  Particle → AWS migration control plane (execution runs in-process with GraphQL)
+  """
+  createMigrationBatch(input: CreateMigrationBatchInput!): MigrationBatch!
+  startMigrationBatch(id: ID!): MigrationBatch!
+  pauseMigrationBatch(id: ID!): MigrationBatch!
+  resumeMigrationBatch(id: ID!): MigrationBatch!
+  continueMigrationDevice(batchId: ID!, deviceId: ID!): MigrationBatch!
+  retryMigrationDevice(batchId: ID!, deviceId: ID!, fromBeginning: Boolean): MigrationBatch!
+  skipMigrationDevice(batchId: ID!, deviceId: ID!): MigrationBatch!
+
+  """
+  Mark a device as failed immediately (e.g. known-offline hanging on a long OTA timeout).
+  Cancels an in-flight step on the next poll; optional reason is stored on the device.
+  """
+  failMigrationDevice(batchId: ID!, deviceId: ID!, reason: String): MigrationBatch!
+  removeMigrationDevice(batchId: ID!, deviceId: ID!): MigrationBatch!
+  updateMigrationBatchSettings(id: ID!, notifyEmail: String, soundEnabled: Boolean, operatorNotes: String): MigrationBatch!
+
+  """
+  Preview or write lifetimeEnergyDelivered (Wh) for a device.
+  proposed = max(BigQuery session sum, Redis, device sysLifetimeEnergy).
+  confirm=false (default): preview only. confirm=true: monotonic Redis write.
+  """
+  recalculateLifetimeEnergy(deviceId: ID!, confirm: Boolean): RecalculateLifetimeEnergyResult!
+}
+
+"""Response from particle call function endpoint"""
+type CallFunctionResponse {
+  """Device ID"""
+  id: String
+
+  """Device name"""
   name: String
+
+  """Name of last app flashed"""
   last_app: String
+
+  """Indicates if the device is currently connected to the cloud"""
   connected: Boolean
+
+  """Return value from the called function"""
   return_value: Int
 }
 
-type CreateChargeRateResult {
-  id: ID
+input ScheduleSlotsInput {
+  sch0: ScheduleSlotInput
+  sch1: ScheduleSlotInput
+  sch2: ScheduleSlotInput
+  sch3: ScheduleSlotInput
+  sch4: ScheduleSlotInput
+  sch5: ScheduleSlotInput
+  sch6: ScheduleSlotInput
+  sch7: ScheduleSlotInput
+  sch8: ScheduleSlotInput
+  sch9: ScheduleSlotInput
 }
 
-# -- Input types -----------------------------------------------------------
+input ScheduleSlotInput {
+  startHour: Int!
+  startMinute: Int!
+  endHour: Int
+  endMinute: Int
 
-input DayMapInput {
+  """Days for schedule"""
+  dayMap: ScheduleDayMapInput!
+  enabled: Boolean!
+  name: String!
+  readOnly: Boolean!
+}
+
+input ScheduleDayMapInput {
   monday: Boolean
   tuesday: Boolean
   wednesday: Boolean
@@ -254,106 +1037,153 @@ input DayMapInput {
   sunday: Boolean
 }
 
-input ScheduleSlotInput {
-  startHour: Int
-  startMinute: Int
-  endHour: Int
-  endMinute: Int
-  enabled: Boolean
-  dayMap: DayMapInput
+input AppUpdatesInput {
+  summary: String!
+  features: [String!]!
+  bugFixes: [String!]!
 }
 
-input ScheduleSlotsInput {
-  schedules: [ScheduleSlotInput]
+input CreateMigrationBatchInput {
+  devices: [MigrationDeviceInput!]!
+  concurrency: Int
+  manualStepMode: Boolean
+  operatorNotes: String
+  notifyEmail: String
+  soundEnabled: Boolean
 }
 
-# -- Root types ------------------------------------------------------------
-
-type Query {
-  getSupportMessage: String
-  getCurrentUserDevices: [Device]
-  getDevice(id: ID!): Device
-  getSolar(deviceId: ID!): SolarSettings
-  searchAddress(addressFragment: String!, countryCode: String): [Address]
+input MigrationDeviceInput {
+  deviceId: ID!
+  serial: String
 }
 
-type Mutation {
-  setSolar(
-    deviceId: ID!
-    override: Boolean
-    chargeAlways: Boolean
-    maxGridChargePercent: Int
-    chargeOutsideSchedules: Boolean
-  ): SolarSettings
-
-  runAEVCommand(
-    deviceId: ID!
-    functionName: String!
-    params: String
-  ): CommandResult
-
-  setAllSchedulesDisabled(deviceId: ID!): CommandResult
-
-  setSchedules(
-    deviceId: ID!
-    scheduleSlots: ScheduleSlotsInput!
-  ): CommandResult
-
-  updateChargeRate(
-    id: ID!
-    startDateTime: Date
-    stopDateTime: Date
-    dayMon: Boolean
-    dayTue: Boolean
-    dayWed: Boolean
-    dayThu: Boolean
-    dayFri: Boolean
-    daySat: Boolean
-    daySun: Boolean
-    timeStartLocal: String
-    timeStopLocal: String
-    price: Float!
-  ): Boolean
-
-  createChargeRate(
-    deviceId: ID!
-    startDateTime: Date
-    stopDateTime: Date
-    dayMon: Boolean
-    dayTue: Boolean
-    dayWed: Boolean
-    dayThu: Boolean
-    dayFri: Boolean
-    daySat: Boolean
-    daySun: Boolean
-    timeStartLocal: String
-    timeStopLocal: String
-    price: Float!
-  ): CreateChargeRateResult
-
-  deleteChargeRate(id: ID!): Boolean
-
-  upsertDeviceInfo(
-    deviceId: ID!
-    friendlyName: String
-    schedule0Name: String
-    schedule1Name: String
-    schedule2Name: String
-    schedule3Name: String
-    schedule4Name: String
-  ): DeviceInfo
-
-  upsertAccount(firstName: String, lastName: String): Boolean
-
-  unclaimDevice(deviceId: ID!): Boolean
-
-  claimDeviceByName(deviceName: String!): Device
-
-  registerMobileDevice(token: String!): Boolean
-
-  unregisterMobileDevice(token: String!): Boolean
+type RecalculateLifetimeEnergyResult {
+  deviceId: ID!
+  redisLifetimeWh: Float!
+  bigQueryLifetimeWh: Float!
+  deviceLifetimeWh: Float!
+  deviceLifetimeKwh: Float!
+  sessionCount: Int!
+  proposedLifetimeWh: Float!
+  applied: Boolean!
+  previousLifetimeWh: Float!
+  writtenLifetimeWh: Float
 }
 
 type Subscription {
+  """Receive live updates to a device's status variables"""
   deviceStatusUpdated(id: ID!): DeviceStatus
+
+  """Receive live updates to a vehicles's status variables"""
+  vehicleStatusUpdated(vehicleId: ID!): VehicleStatus
+}
+
+type VehicleStatus {
+  id: String!
+  customer_id: String!
+  make: String!
+  model: String!
+  year: Int!
+  batteryLevel: Float!
+  batteryCapacity: Float!
+  chargeLimit: Float!
+  chargeTimeRemaining: Float!
+  chargeRate: Float!
+  range: Float!
+  isFullyCharged: Boolean!
+  isPluggedIn: Boolean!
+  isCharging: Boolean!
+  lastUpdated: String!
+  powerDeliveryState: String!
+  latitude: Float!
+  longitude: Float!
+  deadline: Boolean!
+  minimumChargeLimit: Float!
+  capacity: Float!
+  totalRange: Float!
+}
+
+enum Role {
+  ADMIN
+}
+
+type ChargeTimer {
+  start_hour: Int
+  start_min: Int
+  stop_hour: Int
+  stop_min: Int
+  dailyenable: Boolean
+}
+
+type DeviceChargeLogTotal {
+  deviceId: String
+  chargeEnergyTotal: Float
+  solarEnergyTotal: Float
+  gridEnergyTotal: Float
+  durationTotal: Int
+  start: Date
+}
+
+"""Device charge logs"""
+type DeviceChargeLog {
+  deviceId: String!
+
+  """
+  32 Bytes UUID for this charge session 24 chars core id, 8 chars unix localtime in hex
+  """
+  uuid: ID!
+
+  """Local time of charge start (2019-12-31T20:16:50Z)"""
+  start: String
+
+  """Running duration of charge (seconds)"""
+  duration: Int
+
+  """Charge energy supplied to vehicle since start (watt/hours)"""
+  chargeEnergyTotal: Float
+
+  """Solar energy supplied since start (watt/hours)"""
+  solarEnergyTotal: Float
+
+  """Grid energy used since last event (watt/hours)"""
+  gridEnergyTotal: Float
+
+  """Max power supplied to vehicle (watts)"""
+  chargePowerMax: Float
+
+  """Charge log seqs (unparsed)"""
+  seqs: String
+
+  """Charge log seqs (parsed)"""
+  seqList: [DeviceChargeLogSeq]
+
+  """Deprecated"""
+  chargePower: Float
+}
+
+type DeviceChargeLogSeq {
+  """Event sequence 0-(2^32-1)"""
+  seq: Int
+
+  """Charge energy supplied to vehicle since last event (watt/hours)"""
+  chargeEnergy: Float
+
+  """Solar energy supplied since last event (watt/hours)"""
+  solarEnergy: Float
+
+  """Grid energy used since last event (watt/hours)"""
+  gridEnergy: Float
+
+  """Charge energy supplied to vehicle since start of charge (kwH)"""
+  chargeEnergyTotal: Float
+
+  """Solar energy supplied since start of charge (kWh)"""
+  solarEnergyTotal: Float
+
+  """Grid energy used since start of charge  (kwH)"""
+  gridEnergyTotal: Float
+
+  """Max power supplied to vehicle (watts)"""
+  chargePowerMax: Float
+  timestamp: Date
 }

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from gql.transport.exceptions import TransportConnectionFailed, TransportQueryError, TransportServerError
 
-from andersen_ev.konnect.graphql_client import GraphQLClient
+from andersen_ev.konnect.graphql_client import GraphQLClient, has_unauthenticated_error
 
 
 class TestGraphQLClient:
@@ -481,17 +481,26 @@ class TestDSLSchema:
         assert isinstance(ds, DSLSchema)
 
     def test_schema_has_solar_types(self):
-        """Test that the schema includes solar query and mutation fields."""
+        """Test that the schema includes the setSolar mutation and its response type."""
         from andersen_ev.konnect.graphql_client import get_dsl_schema
 
         ds = get_dsl_schema()
-        # Query.getSolar and Mutation.setSolar should exist
-        assert hasattr(ds.Query, "getSolar")
-        assert hasattr(ds.Mutation, "setSolar")
-        # SolarSettings type should have the expected fields
-        assert hasattr(ds.SolarSettings, "override")
-        assert hasattr(ds.SolarSettings, "chargeAlways")
-        assert hasattr(ds.SolarSettings, "maxGridChargePercent")
+        assert set(ds._schema.mutation_type.fields["setSolar"].args) >= {
+            "deviceId",
+            "override",
+            "chargeAlways",
+            "chargeOutsideSchedules",
+            "maxGridChargePercent",
+        }
+        assert hasattr(ds.CallFunctionResponse, "return_value")
+
+    def test_schema_has_device_status_subscription(self):
+        """Test that the schema includes the deviceStatusUpdated subscription."""
+        from andersen_ev.konnect.graphql_client import get_dsl_schema
+
+        ds = get_dsl_schema()
+        assert hasattr(ds.Subscription, "deviceStatusUpdated")
+        assert hasattr(ds.DeviceStatus, "sysUserMaxChargeAmpSet")
 
     def test_returns_cached_instance(self):
         """Test that get_dsl_schema returns the same cached instance."""
@@ -845,22 +854,22 @@ class TestConnectionManagement:
 
 
 class TestHasUnauthenticatedError:
-    """Tests for the _has_unauthenticated_error() static helper."""
+    """Tests for the has_unauthenticated_error() helper."""
 
     def test_non_dict_error_items_are_ignored(self):
         """Non-dict entries in errors are skipped without raising."""
         err = TransportQueryError("boom", errors=["not-a-dict", {"extensions": {"code": "OTHER"}}])
-        assert GraphQLClient._has_unauthenticated_error(err) is False
+        assert has_unauthenticated_error(err) is False
 
     def test_dict_error_with_unauthenticated_code_returns_true(self):
         """A dict error with code UNAUTHENTICATED is detected."""
         err = TransportQueryError("boom", errors=[{"extensions": {"code": "UNAUTHENTICATED"}}])
-        assert GraphQLClient._has_unauthenticated_error(err) is True
+        assert has_unauthenticated_error(err) is True
 
     def test_no_errors_returns_false(self):
         """A missing errors list is treated as no UNAUTHENTICATED error."""
         err = TransportQueryError("boom", errors=None)
-        assert GraphQLClient._has_unauthenticated_error(err) is False
+        assert has_unauthenticated_error(err) is False
 
 
 class TestProactiveRefreshScheduling:
