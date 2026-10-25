@@ -227,7 +227,9 @@ class KonnectDevice:
             self.device_id,
             self.friendly_name,
         )
-        success = await self._run_command("chargeNow")
+        # Matches the app, which sends chargeNow and then userForceStart. userForceStart clears
+        # the force stop set by stop_charging, without which the charger will not restart.
+        success = await self._run_command("chargeNow") and await self._run_command("userForceStart")
         if not success:
             _LOGGER.warning(
                 "Failed to start charging for device %s (%s)",

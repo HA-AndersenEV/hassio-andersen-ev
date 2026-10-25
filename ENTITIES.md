@@ -48,15 +48,22 @@ Unique IDs are `<device id>_<suffix>`, using the suffix in the Entity column. En
 | Entity | Type | Data source type | Data source field | Update field | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Lock (`lock`) | Lock | GraphQL subscription | `sysUserLock` | `runAEVCommand` `userLock` / `userUnlock` | Shows `locking` / `unlocking` until the charger confirms, usually within seconds. Reverts with a warning if not confirmed within 5 minutes |
-| Charge now (`charge_now`) | Button | — | — | `runAEVCommand` `chargeNow` | Starts charging now, ignoring schedules |
+| Charge now (`charge_now`) | Button | — | — | `runAEVCommand` `chargeNow`, then `userForceStart` | Starts charging now, ignoring schedules |
 | Stop charging (`stop_charging`) | Button | — | — | `runAEVCommand` `userForceStop`, then `stopChargeNow` | Has no effect while Charge outside schedule is on and solar is available |
-| Schedule {n} (`schedule_{index}`) | Switch, config | GraphQL subscription | `scheduleSlotsArray[n].enabled` | `setSchedules` with the slot as `sch{n}` | One switch per slot, created at startup from the `getDevice` query. The slot's name from the app (`deviceInfo.schedule{n}Name`) is in the `schedule_name` attribute |
+| Government Schedule (`government_schedule`) | Switch, config | GraphQL subscription | `scheduleSlotsArray[0].enabled` and `[1].enabled`; on only when both are on | `setSchedules` with `sch0` and `sch1` both changed (see note below) | The charger stores the government default as two read-only slots, which the app shows and toggles as one schedule. Keeps the old slot 0 switch's unique ID (`{device_id}_schedule_0`) |
+| Schedule {n} (`schedule_{index}`) | Switch, config | GraphQL subscription | `scheduleSlotsArray[n].enabled` | `setSchedules` with `sch{n}` changed (see note below) | One switch per user slot (slots 2 to 9), created at startup from the `getDevice` query. The slot's name from the app (`deviceInfo.schedule{n}Name`) is in the `schedule_name` attribute |
 | Boost (`solar_boost`) | Switch | GraphQL subscription | `solarOverride` | `setSolar(override)` | Ignores solar settings and charges at full rate while a charge is in progress. It doesn't start a charge. Andersen ends a boost after about 2 hours |
 | Supplement with grid power (`solar_solarChargeAlways`) | Switch | GraphQL subscription | `solarChargeAlways` | `setSolar(chargeAlways, maxGridChargePercent)` | Off also sends 0%. On restores the previous percentage, at least 1.4 kW; the previous value survives restarts |
 | Charge outside schedule (`solar_solarChargeOutsideSchedules`) | Switch | GraphQL subscription | `chargeOutsideSchedules` | `setSolar(chargeOutsideSchedules)` | Allows solar charging outside schedules. `sysScheduleLock` is not this setting: it means a schedule is currently blocking charging |
 | Grid source power (`grid_source_power`) | Number, power (kW), step 0.1 | GraphQL subscription | `solarMaxGridChargePercent`, with `sysUserMaxChargeAmpSet` and `cfgChargeAmpMax` | `setSolar(chargeAlways, maxGridChargePercent)` | Stored by Andersen as a percentage of maximum power (user max current × 0.225 kW, or the installer limit if no user max is set). Must be 0 or at least 1.4 kW: values in between are set to 0 with a warning. 1.4 kW or more also turns Supplement with grid power on; 0 turns it off |
 | User max power (`user_max_power`) | Number, power (kW), step 0.1 | GraphQL subscription | `sysUserMaxChargeAmpSet` (range from `cfgChargeAmpMax`) | `runAEVCommand` `userAmpSet` `{"userSetChargeAmpMax": <A>}` | Only 10, 16, 24 or 32 A (2.3, 3.6, 5.4, 7.2 kW) up to the installer limit; other values round to the nearest, halfway rounds down. Shows the installer limit when no user max is set |
 | User max current (`user_max_current`) | Number, current (A), step 1 | GraphQL subscription | `sysUserMaxChargeAmpSet` (range from `cfgChargeAmpMax`) | `runAEVCommand` `userAmpSet` `{"userSetChargeAmpMax": <A>}` | Same setting as User max power. Disabled by default |
+
+**Schedule updates.** As in the app, every `setSchedules` call sends all slots (`sch0` to `sch9`), not
+just the one being changed. The server reads each slot's `name` and `readOnly`, and fails if any are
+missing. The status data doesn't include names, so the switch fetches them with `getDevice` just
+before each change. If the names can't be fetched, nothing is sent, so a blank name never
+overwrites one set in the app. `readOnly` is true for slots 0 and 1.
 
 ## Device information
 

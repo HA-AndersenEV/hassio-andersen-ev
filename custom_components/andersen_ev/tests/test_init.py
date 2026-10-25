@@ -516,16 +516,69 @@ class TestAsyncMigrateEntry:
             assert await async_migrate_entry(hass, entry) is True
 
         registry.async_get_entity_id.assert_any_call("sensor", DOMAIN, "device_2_grid_power")
-        assert registry.async_get_entity_id.call_count == 2
+        sensor_lookups = [c for c in registry.async_get_entity_id.call_args_list if c.args[0] == "sensor"]
+        assert len(sensor_lookups) == 2
         registry.async_remove.assert_called_once_with("sensor.device_grid_power")
-        hass.config_entries.async_update_entry.assert_called_once_with(entry, minor_version=2)
+        hass.config_entries.async_update_entry.assert_any_call(entry, minor_version=2)
+
+    @pytest.mark.asyncio
+    async def test_merges_government_schedule_switches(self) -> None:
+        """The slot 1 switch is removed and a repair issue names it and the merged switch."""
+        hass = _make_hass()
+        entry = self._entry(minor_version=2)
+        devices = [MagicMock(identifiers={(DOMAIN, "device_1")})]
+        entity_ids = {
+            "device_1_schedule_0": "switch.home_charger_schedule_1",
+            "device_1_schedule_1": "switch.home_charger_schedule_2",
+        }
+        registry = MagicMock()
+        registry.async_get_entity_id.side_effect = lambda _domain, _platform, unique_id: entity_ids.get(unique_id)
+
+        with (
+            patch("andersen_ev.er.async_get", return_value=registry),
+            patch("andersen_ev.dr.async_get"),
+            patch("andersen_ev.dr.async_entries_for_config_entry", return_value=devices),
+            patch("andersen_ev.ir.async_create_issue") as create_issue,
+        ):
+            assert await async_migrate_entry(hass, entry) is True
+
+        registry.async_remove.assert_called_once_with("switch.home_charger_schedule_2")
+        create_issue.assert_called_once()
+        assert create_issue.call_args.args[2] == "government_schedule_merged_entry_1"
+        # The migration runs once, so the notice has to survive restarts.
+        assert create_issue.call_args.kwargs["is_persistent"] is True
+        assert create_issue.call_args.kwargs["translation_placeholders"] == {
+            "removed_entities": "switch.home_charger_schedule_2",
+            "government_entities": "switch.home_charger_schedule_1",
+        }
+        hass.config_entries.async_update_entry.assert_called_once_with(entry, minor_version=3)
+
+    @pytest.mark.asyncio
+    async def test_government_merge_without_slot_1_switch_raises_no_issue(self) -> None:
+        hass = _make_hass()
+        registry = MagicMock()
+        registry.async_get_entity_id.return_value = None
+
+        with (
+            patch("andersen_ev.er.async_get", return_value=registry),
+            patch("andersen_ev.dr.async_get"),
+            patch(
+                "andersen_ev.dr.async_entries_for_config_entry",
+                return_value=[MagicMock(identifiers={(DOMAIN, "device_1")})],
+            ),
+            patch("andersen_ev.ir.async_create_issue") as create_issue,
+        ):
+            assert await async_migrate_entry(hass, self._entry(minor_version=2)) is True
+
+        registry.async_remove.assert_not_called()
+        create_issue.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_current_version_is_left_alone(self) -> None:
         hass = _make_hass()
 
         with patch("andersen_ev.er.async_get") as mock_er:
-            assert await async_migrate_entry(hass, self._entry(minor_version=2)) is True
+            assert await async_migrate_entry(hass, self._entry(minor_version=3)) is True
 
         mock_er.assert_not_called()
         hass.config_entries.async_update_entry.assert_not_called()
