@@ -63,7 +63,43 @@ async def async_migrate_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry)
                 ):
                     entity_registry.async_remove(entity_id)
         hass.config_entries.async_update_entry(entry, minor_version=2)
+    if entry.minor_version < 3:
+        _async_merge_government_schedule_switches(hass, entry)
+        hass.config_entries.async_update_entry(entry, minor_version=3)
     return True
+
+
+def _async_merge_government_schedule_switches(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> None:
+    """Remove the slot 1 schedule switch, now part of the Government Schedule switch on slot 0."""
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    removed: list[str] = []
+    kept: list[str] = []
+    for device_entry in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        for domain, device_id in device_entry.identifiers:
+            if domain != DOMAIN:
+                continue
+            if entity_id := entity_registry.async_get_entity_id("switch", DOMAIN, f"{device_id}_schedule_1"):
+                entity_registry.async_remove(entity_id)
+                removed.append(entity_id)
+            if entity_id := entity_registry.async_get_entity_id("switch", DOMAIN, f"{device_id}_schedule_0"):
+                kept.append(entity_id)
+    if removed:
+        # Automations and scripts that used the removed switch need pointing at the merged one.
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"government_schedule_merged_{entry.entry_id}",
+            is_fixable=False,
+            # The migration runs once, so the notice must survive restarts until dismissed.
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="government_schedule_merged",
+            translation_placeholders={
+                "removed_entities": ", ".join(removed),
+                "government_entities": ", ".join(kept) or "the Government Schedule switch",
+            },
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) -> bool:

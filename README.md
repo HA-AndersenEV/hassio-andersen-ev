@@ -118,7 +118,9 @@ See [Features](#features) above, [ENTITIES.md](ENTITIES.md) for the full entity 
 * A **lock** entity per charger to enable/disable charging (`userLock`/`userUnlock`).
 * **Charge now** and **Stop charging** buttons per charger (`chargeNow` + `userForceStart`,
   and `userForceStop` + `stopChargeNow`).
-* A **switch** entity per charging schedule slot, so each schedule can be turned on or off
+* A **Government Schedule** switch for the charger's default off-peak schedule. The charger
+  stores this as two time slots, and the switch turns both on or off together, as the app does.
+* A **switch** entity per user charging schedule slot, so each schedule can be turned on or off
   independently.
 * **Solar charging** switches and a grid source power number, mirroring the app's Power source
   screen.
@@ -255,6 +257,26 @@ the settings reliably otherwise:
 
 Unlike the app, the integration doesn't limit grid source power to 0.2 kW steps.
 
+## Upgrading
+
+### Government schedule switches merged
+
+Earlier versions had a **Schedule 1** and a **Schedule 2** switch for the two halves of the
+charger's government default schedule. These are now one **Government Schedule** switch, which
+turns both halves on or off together, as the Andersen app does.
+
+When you upgrade, this happens automatically:
+
+* The old **Schedule 1** switch becomes the **Government Schedule** switch. It keeps its entity
+  ID (for example `switch.home_charger_schedule_1`) and history, so automations and dashboards
+  that used it keep working. You can rename the entity ID in Settings if you'd like it to match
+  the new name.
+* The old **Schedule 2** switch is removed. A repair notice in **Settings > Repairs** lists it.
+  Update any automations, scripts or dashboards that used it to use the Government Schedule
+  switch, then dismiss the notice.
+
+Your other schedule switches (Schedule 3 onwards) are unchanged.
+
 ## Known limitations
 
 * **One Andersen account per Home Assistant instance.** The integration only allows a single
@@ -309,7 +331,7 @@ automation:
     action:
       - service: switch.turn_off
         target:
-          entity_id: switch.YOUR_SCHEDULE_1_SWITCH # e.g. switch.driveway_charger_schedule_1
+          entity_id: switch.YOUR_SCHEDULE_SWITCH # e.g. switch.driveway_charger_schedule_3
 ```
 
 Reset the RCM fault automatically when the fault code sensor reports a fault:

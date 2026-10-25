@@ -29,7 +29,8 @@
       "stop_charging": { "default": "mdi:stop-circle-outline" }
     },
     "switch": {
-      "schedule": { "default": "mdi:calendar-clock" }
+      "schedule": { "default": "mdi:calendar-clock" },
+      "government_schedule": { "default": "mdi:calendar-clock" }
     },
     "number": {
       "user_max_current": { "default": "mdi:current-ac" },
