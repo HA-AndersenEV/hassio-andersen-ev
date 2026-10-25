@@ -52,6 +52,20 @@
       "solar_cost": { "name": "Solar Cost" },
       "surplus_cost": { "name": "Surplus Cost" },
       "connector": { "name": "Connector" },
+      "charge_status": {
+        "name": "Charge status",
+        "state": {
+          "charging": "Charging",
+          "connected": "Connected",
+          "unplugged": "Unplugged",
+          "stopped": "Stopped",
+          "locked": "Locked",
+          "scheduled": "Scheduled",
+          "waiting_for_solar": "Waiting for solar",
+          "error": "Error",
+          "offline": "Offline"
+        }
+      },
       "charge_power": { "name": "Charge Power" },
       "charge_power_max": { "name": "Max Charge Power" },
       "solar_power": { "name": "Solar Power" },

@@ -24,6 +24,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
+from .charge_status import CHARGE_STATUS_OPTIONS, calculate_charge_state, charge_status_badge
 from .const import DOMAIN
 from .entity import AndersenEvDeviceInfoMixin, live_status_available
 
@@ -214,6 +215,7 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
 
     # Connector state sensor
     entities.append(AndersenEvConnectorSensor(coordinator, device))
+    entities.append(AndersenEvChargerStatusSensor(coordinator, device))
 
     # Realtime charge status sensors - power
     entities.append(
@@ -472,6 +474,41 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
                     self._connector_state = "unknown"
 
         return self._connector_state
+
+
+class AndersenEvChargerStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SensorEntity):
+    """The charger status badge from the Konnect+ app's home screen."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = CHARGE_STATUS_OPTIONS
+    _attr_has_entity_name = True
+    _attr_translation_key = "charge_status"
+
+    def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._device = device
+        self._attr_unique_id = f"{device.device_id}_charge_status"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device.device_id)},
+            name=device.friendly_name,
+            manufacturer="Andersen EV",
+            serial_number=f"{device.device_id}",
+        )
+        self._update_device_info_from_status()
+
+    @property
+    def available(self) -> bool:
+        """Return if the sensor is available."""
+        return live_status_available(self._device)
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the badge, worked out as the app does from the live status and REST info."""
+        if not (status := self._device.live_status):
+            return None
+        charge_state = calculate_charge_state(status, self._device.last_rest_info, dt_util.now())
+        return charge_status_badge(charge_state, status)
 
 
 class AndersenEvChargeStatusSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SensorEntity):

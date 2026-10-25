@@ -30,7 +30,7 @@ Notes from reverse engineering the Andersen Android app's React Native bundle
     - [`sysFaultCode` bit values](#sysfaultcode-bit-values)
     - [Order of checks](#order-of-checks)
     - [Badge text and colour](#badge-text-and-colour)
-    - [Practical shortcut](#practical-shortcut)
+    - [In the integration](#in-the-integration)
 11. [Firmware differences](#11-firmware-differences)
 
 ---
@@ -311,7 +311,7 @@ The Home screen (`ChargerOverview`) computes five flags: `chargeNow`, `oldCharge
 
 ## 10. Replicating the charger status (the badge on the Home screen)
 
-The charger does not send a ready-made state. The app works it out on the phone in `getChargeStatus` (wrapped by `calculateChargeState`) from the raw status. These findings come from the v98 decompilation, so the order of checks is my best reading rather than certain.
+The charger does not send a ready-made state. The app works it out on the phone in `getChargeStatus` (wrapped by `calculateChargeState`) from the raw status. These findings come from the v98 decompilation (`apk/decompiled/index.js`, functions `getChargeStatus`, `calculateChargeState` and `DeviceConnectionStatus`).
 
 ### Inputs
 
@@ -319,7 +319,8 @@ The charger does not send a ready-made state. The app works it out on the phone 
 |---|---|
 | `evseState`, `sysUserLock`, `sysScheduleLock`, `online`, `sysFaultCode`, `sysFwVersion`, `sysSch0`–`sysSch9`, `sysKaluzaSch0`–`sysKaluzaSch9` | GraphQL `deviceStatus` (initial read and live via `deviceStatusUpdated`) |
 | `lastEventAge` | seconds since the last event: `round((now - lastEvent) / 1000)`, calculated by `calculateChargeState` |
-| `KaluzaLinked`, `KaluzaSchedules`, `LastCheckedOctopus`, `NotifiedDeviceOfflineAt` | REST `info` (PascalCase) |
+| `KaluzaLinked`, `KaluzaSchedules`, `LastCheckedOctopus`, `NotifiedDeviceOfflineAt` (as `isOffline`) | REST `info` (PascalCase) |
+| `sysPlugged`, `sysForceStop` | GraphQL `deviceStatus`; used by the badge, not the state |
 
 ### `evseState` values
 
@@ -356,37 +357,45 @@ The charger does not send a ready-made state. The app works it out on the phone 
 
 ### Order of checks
 
-1. **Offline.** Returns `OFFLINE` if `isOffline` is set, if `online` is false, or if `lastEventAge` is greater than a firmware-dependent threshold. The threshold is **900 s** for `sysFwVersion` in 516–599, 611–699 and 706–899, and **300 s** (`offlineDurationInSeconds`) otherwise.
+1. **Offline.** Returns `OFFLINE` if `lastEventAge` is greater than a firmware-dependent threshold, or if `online` is falsy. The threshold is **900 s** for `sysFwVersion` in 516–599, 611–699 and 706–899, and **300 s** (`offlineDurationInSeconds`) otherwise. On the 900 s firmware only, it also returns `OFFLINE` when `isOffline` is set. `calculateChargeState` sets `isOffline` to `!!info.NotifiedDeviceOfflineAt` (REST).
 2. **Locked.** `sysUserLock === true` returns `LOCKED`.
 3. **Hard faults.** Any of `FAULT_CODE_STUCK_CONTACT`, `FAULT_CODE_OPEN_CONTACT` or `FAULT_OVERTEMP` returns `FAULT`.
-4. **`evseState`.** As in the table above. Only `EVSE_STATE_DISABLED` continues.
+4. **`evseState`.** As in the table above (`calculateChargeState` passes it through `Number()`). Only `EVSE_STATE_DISABLED` continues.
 5. **Disabled branch.**
    1. If any of `FAULT_CODE_RCM_TRIP`, `FAULT_CODE_OCP_TRIP`, `FAULT_CODE_SUPPLY_VOLTS_FAULT`, `FAULT_CODE_PEN_INHIBIT`, `FAULT_CODE_EARTH_CT_OP` or `FAULT_CODE_EARTH_CT_ERROR` is set, return `FAULT`.
-   2. If `sysScheduleLock === true` and any `sysSchN` string ends in `'1'`, return `SCHEDULED`.
-   3. Smart-tariff (Kaluza/Octopus) handling can return `SCHEDULED` or `WONT_CHARGE`. It uses `sysKaluzaSch0`–`9`, `KaluzaSchedules` (a JSON string), the weekday codes monday `02`, tuesday `04`, wednesday `08` and so on, and a comparison with today and yesterday. **Not fully decoded.** The UI text for `WONT_CHARGE` is "No smart schedules set" and for `SCHEDULED` is "Your charge point is due to start charging…" (with a randomised delay if one applies).
+   2. If `sysScheduleLock === true` and any `sysSchN` string, with `\` and `"` removed, ends in `'1'`, return `SCHEDULED`.
+   3. Smart tariff (Kaluza/Octopus). `sysKaluzaSchN` strings hold the start time `HHmm` in characters 0–3 and a weekday code in characters 8–9 (monday `02`, tuesday `04`, wednesday `08`, thursday `10`, friday `20`, saturday `40`, sunday `01`):
+      1. If `sysKaluzaSch0` is set, isn't `000000000000`, has yesterday's day code and starts at `1759`, return `WONT_CHARGE`. (The code compares against yesterday twice; one was probably meant to be today.)
+      2. If `info.LastCheckedOctopus` was yesterday (local date) and no `sysKaluzaSchN` is for tomorrow or for later today, return `WONT_CHARGE`.
+      3. If `info.KaluzaSchedules` is set and any `sysKaluzaSchN` is set, parse `KaluzaSchedules` as JSON and loop over its values. Without `info.KaluzaLinked` each one counts as scheduled; with it, each value (JSON, possibly as a string) counts as scheduled when its `deviceMode` isn't `'idle'`. The last value decides. If scheduled, return `SCHEDULED`. A parse error is logged and ignored.
+      The UI text for `WONT_CHARGE` is "No smart schedules set" and for `SCHEDULED` is "Your charge point is due to start charging…" (with a randomised delay if one applies).
    4. If `FAULT_SOLAR_CHARGE_CURRENT_LOW` or `FAULT_CODE_CHARGE_CURRENT_TOO_LOW_AF` is set, return `PAUSED`.
    5. Otherwise return `DISABLED`.
 
 `REDUCED_CHARGE` exists in the state list but `getChargeStatus` never returns it. It is probably set elsewhere (the UI text is "Charge rate reduced by vehicle").
 
+The Kaluza `typeof` checks decompile as `'boolean'`, which can't be right for a value passed to `JSON.parse`; v98 string labels are unreliable, so they are read as `'string'`.
+
 ### Badge text and colour
 
-| State | Text | Colour |
-|---|---|---|
-| `CHARGING` | CHARGING | green |
-| `CONNECTED` | CONNECTED | green |
-| `STANDBY` | UNPLUGGED | grey |
-| `LOCKED` | LOCKED | light blue |
-| `SCHEDULED` | SCHEDULED | orange |
-| `PAUSED` | WAITING (plus FOR SOLAR when solar applies) | orange |
-| `FAULT` | ERROR | red |
-| `OFFLINE` | OFFLINE (text path not fully traced) | grey |
+The badge (`DeviceConnectionStatus`) is not a direct map of the state. It also takes `isPluggedIn` (`status.sysPlugged`, null as false) and `forcedStop` (`status.sysForceStop`), and builds the text in this order, later steps winning:
 
-A red STOPPED badge also exists. I did not find what triggers it. The `PAUSED` tooltip reads "Waiting for solar energy".
+1. CONNECTED (green) if plugged in, otherwise UNPLUGGED (grey).
+2. CHARGING (green) if the state is `CHARGING`.
+3. STOPPED (red) if `forcedStop` is set and the state isn't `CHARGING`.
+4. LOCKED (light blue), SCHEDULED (orange), WAITING FOR SOLAR (orange) for `PAUSED`, ERROR (red) for `FAULT`.
+5. OFFLINE (grey) for `OFFLINE`, CONNECTED (green) for `CONNECTED`. So a `CONNECTED` state hides STOPPED.
 
-### Practical shortcut
+`STARTING`, `STANDBY`, `DISABLED` and `WONT_CHARGE` have no text of their own: they show CONNECTED, UNPLUGGED or STOPPED. The home screen passes `short`, which drops "FOR SOLAR" and shows just WAITING; the device list shows the full text. The `PAUSED` tooltip reads "Waiting for solar energy".
 
-For a Home Assistant sensor, the GraphQL fields are enough for most states: `OFFLINE`, `LOCKED`, `FAULT`, `STANDBY`, `CONNECTED`, `CHARGING` and "waiting for solar" (`evseState` 255 with a solar-low fault bit set). Only the `SCHEDULED` versus `WONT_CHARGE` split in smart-tariff mode needs the REST fields and the undecoded branch.
+### In the integration
+
+The `charge_status` sensor (`charge_status.py`) replicates both functions in full, with these differences:
+
+- Times are Home Assistant's local time rather than the phone's.
+- A missing or unreadable `lastEvent` skips the age check. In the app, `null` gives an age since 1970 and so `OFFLINE`.
+- `sysKaluzaSch0`–`9` were added to the integration's `deviceStatusUpdated` subscription (the app's subscription requests them too). The REST `info` fields come from the 60 s `getDevice` poll.
+- The state is re-checked whenever the subscription or the 60 s poll updates, so `OFFLINE` from a stale `lastEvent` can lag by up to a minute.
 
 ---
 

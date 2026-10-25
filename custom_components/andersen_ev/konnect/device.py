@@ -86,6 +86,11 @@ class KonnectDevice:
         """Return the status object from the last REST getDevice call."""
         return (self._last_user_device or {}).get("status") or {}
 
+    @property
+    def last_rest_info(self) -> dict[str, Any]:
+        """Return the info object (PascalCase fields) from the last REST getDevice call."""
+        return (self._last_user_device or {}).get("info") or {}
+
     async def get_user_device(self) -> dict[str, Any]:
         """Fetch and cache the REST getDevice userDevice object."""
         self._last_user_device = await self.api.getDevice(self.device_id)

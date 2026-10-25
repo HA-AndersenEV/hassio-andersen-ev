@@ -43,6 +43,16 @@ subscription deviceStatusUpdated($id: ID!) {
     sysSch7
     sysSch8
     sysSch9
+    sysKaluzaSch0
+    sysKaluzaSch1
+    sysKaluzaSch2
+    sysKaluzaSch3
+    sysKaluzaSch4
+    sysKaluzaSch5
+    sysKaluzaSch6
+    sysKaluzaSch7
+    sysKaluzaSch8
+    sysKaluzaSch9
     sysFaultCode
     sysSchEnabled
     sysUserLock
