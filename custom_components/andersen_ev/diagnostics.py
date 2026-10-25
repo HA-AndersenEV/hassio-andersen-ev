@@ -37,6 +37,7 @@ def _device_diagnostics(device: KonnectDevice) -> dict[str, Any]:
         "model_name": device.model_name,
         # Only the REST status; its device and info objects hold account emails.
         "last_rest_status": device.last_rest_status,
+        "user_max_amps_field": device.user_max_amps_field,
         "subscription": {
             "connected": device.subscription_connected,
             "disconnected_since": _isoformat(device.subscription_disconnected_since),

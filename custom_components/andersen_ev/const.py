@@ -23,6 +23,11 @@ KW_PER_AMP = 0.225
 # The only user max charge currents the charger applies; it silently ignores anything else.
 ALLOWED_USER_MAX_AMPS = (10, 16, 24, 32)
 
+# As in the app, firmware below this has 5 schedule slots, and from it 10.
+FW_VERSION_FOR_ADVANCED_USE = 500
+SCHEDULE_SLOT_COUNT_OLD_FW = 5
+SCHEDULE_SLOT_COUNT = 10
+
 # Services
 SERVICE_DISABLE_ALL_SCHEDULES = "disable_all_schedules"
 SERVICE_GET_DEVICE_INFO = "get_device_info"

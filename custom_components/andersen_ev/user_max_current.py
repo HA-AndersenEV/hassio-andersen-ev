@@ -1,4 +1,4 @@
-"""Conversion and rounding for the user max charge current (sysUserMaxChargeAmpSet)."""
+"""Conversion and rounding for the user max charge current."""
 
 from decimal import Decimal
 

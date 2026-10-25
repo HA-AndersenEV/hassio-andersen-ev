@@ -182,7 +182,7 @@ class AndersenEvGridSourcePowerNumber(CoordinatorEntity[AndersenEvCoordinator], 
 class AndersenEvUserMaxCharge(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], NumberEntity):  # pylint: disable=abstract-method
     """Base for the user max charge current, set in the app's power settings.
 
-    The current and power entities show the same charger setting (sysUserMaxChargeAmpSet).
+    The current and power entities show the same charger setting (see effective_max_amps).
     """
 
     _attr_has_entity_name = True
