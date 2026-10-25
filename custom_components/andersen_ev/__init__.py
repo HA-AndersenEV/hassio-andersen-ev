@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import timedelta
 
-import voluptuous as vol
+import probatio as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
