@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Older firmware keeps sysUserMaxChargeAmpSet fixed and only the REST status userSetChargeAmpMax follows the setting.
+USER_SET_CHARGE_AMP_MAX = "userSetChargeAmpMax"
+SYS_USER_MAX_CHARGE_AMP_SET = "sysUserMaxChargeAmpSet"
+
 
 class KonnectDevice:
     """Represents an Andersen EV charger and its GraphQL operations."""
@@ -41,6 +45,9 @@ class KonnectDevice:
     subscription_connected: bool = False
     subscription_disconnected_since: datetime | None = None
     last_subscription_update: datetime | None = None
+    # The user max current field last seen to appear or change; see effective_max_amps.
+    user_max_amps_field: str | None = None
+    _user_max_amps_seen: dict[str, Any]
 
     def __init__(self, api, device_id, friendly_name, user_lock):
         """Initialize the device."""
@@ -61,6 +68,8 @@ class KonnectDevice:
         self.subscription_connected = False
         self.subscription_disconnected_since = None
         self.last_subscription_update = None
+        self.user_max_amps_field = None
+        self._user_max_amps_seen = {}
 
     @property
     def last_status(self):
@@ -80,6 +89,7 @@ class KonnectDevice:
     async def get_user_device(self) -> dict[str, Any]:
         """Fetch and cache the REST getDevice userDevice object."""
         self._last_user_device = await self.api.getDevice(self.device_id)
+        self._track_user_max_amps(USER_SET_CHARGE_AMP_MAX, self.last_rest_status.get(USER_SET_CHARGE_AMP_MAX))
         return self._last_user_device
 
     @property
@@ -100,7 +110,25 @@ class KonnectDevice:
         """
         if self._last_subscription_status is None:
             self._last_subscription_status = {}
+        self._track_user_max_amps(SYS_USER_MAX_CHARGE_AMP_SET, payload.get(SYS_USER_MAX_CHARGE_AMP_SET))
         return merge_changes(self._last_subscription_status, payload)
+
+    def _track_user_max_amps(self, field: str, value: Any) -> None:
+        """Read the user max current from field once it changes, or when first seen.
+
+        On first sight userSetChargeAmpMax is preferred, since where both are reported it is the one
+        that follows the setting.
+        """
+        if value is None:
+            return
+        first_seen = field not in self._user_max_amps_seen
+        changed = not first_seen and self._user_max_amps_seen[field] != value
+        self._user_max_amps_seen[field] = value
+        if field == self.user_max_amps_field:
+            return
+        if changed or (first_seen and (self.user_max_amps_field is None or field == USER_SET_CHARGE_AMP_MAX)):
+            _LOGGER.debug("Reading user max charge current for %s from %s", self.friendly_name, field)
+            self.user_max_amps_field = field
 
     @property
     def last_charge(self):

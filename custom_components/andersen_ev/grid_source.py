@@ -3,7 +3,7 @@
 from decimal import ROUND_HALF_UP, Decimal
 
 from .const import KW_PER_AMP
-from .konnect.device import KonnectDevice
+from .konnect.device import SYS_USER_MAX_CHARGE_AMP_SET, USER_SET_CHARGE_AMP_MAX, KonnectDevice
 
 # The charger can't supplement with less than this, so anything between 0 and this is rejected.
 MIN_GRID_SOURCE_POWER_KW = 1.4
@@ -37,9 +37,14 @@ def device_max_amps(device: KonnectDevice) -> float | None:
 def effective_max_amps(device: KonnectDevice) -> float | None:
     """Return the user max charge current, or the installer limit if it isn't set.
 
-    The app works out grid source power from this, so percentages follow a lowered user max.
+    Read from the polled userSetChargeAmpMax or the live sysUserMaxChargeAmpSet, whichever last
+    changed. The app works out grid source power from this, so percentages follow a lowered user max.
     """
-    if amps := device.live_status.get("sysUserMaxChargeAmpSet"):
+    if device.user_max_amps_field == USER_SET_CHARGE_AMP_MAX:
+        amps = device.last_rest_status.get(USER_SET_CHARGE_AMP_MAX)
+    else:
+        amps = device.live_status.get(SYS_USER_MAX_CHARGE_AMP_SET)
+    if amps:
         return float(amps)
     return device_max_amps(device)
 

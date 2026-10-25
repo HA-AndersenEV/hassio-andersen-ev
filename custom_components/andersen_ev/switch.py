@@ -17,7 +17,7 @@ from homeassistant.helpers.restore_state import (
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import AndersenEvConfigEntry, AndersenEvCoordinator
-from .const import DOMAIN
+from .const import DOMAIN, FW_VERSION_FOR_ADVANCED_USE, SCHEDULE_SLOT_COUNT, SCHEDULE_SLOT_COUNT_OLD_FW
 from .entity import AndersenEvDeviceInfoMixin, live_status_available
 from .grid_source import effective_max_amps, grid_supplement_on_percent
 from .konnect import const
@@ -38,6 +38,18 @@ SOLAR_FIELD_TO_PARAM = {
 }
 
 
+def schedule_slot_count(status: dict[str, Any]) -> int:
+    """Return how many schedule slots the charger's firmware uses.
+
+    As in the app, a missing or unreadable firmware version counts as old firmware.
+    """
+    try:
+        fw_version = float(status.get("sysFwVersion") or 0)
+    except TypeError, ValueError:
+        fw_version = 0
+    return SCHEDULE_SLOT_COUNT if fw_version >= FW_VERSION_FOR_ADVANCED_USE else SCHEDULE_SLOT_COUNT_OLD_FW
+
+
 async def _async_build_switches_for_device(coordinator: AndersenEvCoordinator, device) -> list[SwitchEntity]:
     """Build schedule and solar switches for a single device (fetches device info)."""
     # Get device info including schedule names and schedule slots
@@ -51,7 +63,8 @@ async def _async_build_switches_for_device(coordinator: AndersenEvCoordinator, d
         _LOGGER.warning("Could not retrieve schedule slots for %s", device.friendly_name)
         return []
 
-    schedule_slots = device_info["deviceStatus"]["scheduleSlotsArray"]
+    device_status = device_info["deviceStatus"]
+    schedule_slots = device_status["scheduleSlotsArray"][: schedule_slot_count(device_status)]
     device_info_data = device_info["deviceInfo"]
 
     # Create switches for each schedule
@@ -200,15 +213,16 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
         slot_names = device_info["deviceInfo"]
 
         if "scheduleSlotsArray" in self._device.live_status:
-            schedule_slots = copy.deepcopy(self._device.live_status["scheduleSlotsArray"])
+            status = self._device.live_status
         elif "scheduleSlotsArray" in (device_info.get("deviceStatus") or {}):
-            schedule_slots = copy.deepcopy(device_info["deviceStatus"]["scheduleSlotsArray"])
+            status = device_info["deviceStatus"]
         else:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="schedule_data_unavailable",
                 translation_placeholders={"device_name": self._device.friendly_name},
             )
+        schedule_slots = copy.deepcopy(status["scheduleSlotsArray"][: schedule_slot_count(status)])
 
         if len(schedule_slots) <= max(self._slot_indices):
             raise HomeAssistantError(
@@ -220,8 +234,8 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
                 },
             )
 
-        # As in the app, every slot is sent, keyed as sch0, sch1, etc. The API requires name and
-        # readOnly, which the status data does not include.
+        # As in the app, every slot the firmware uses is sent, keyed as sch0, sch1, etc. The API
+        # requires name and readOnly, which the status data does not include.
         formatted_slots = {}
         for idx, slot in enumerate(schedule_slots):
             if idx in self._slot_indices:
