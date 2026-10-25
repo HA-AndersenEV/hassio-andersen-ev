@@ -1,8 +1,9 @@
 """Tests for the Andersen EV user max charge current and power numbers."""
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.number import NumberDeviceClass
@@ -10,6 +11,7 @@ from homeassistant.const import UnitOfElectricCurrent, UnitOfPower
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
+from andersen_ev.konnect.device import KonnectDevice
 from andersen_ev.konnect.exceptions import AndersenConnectionError
 from andersen_ev.number import AndersenEvUserMaxCurrentNumber, AndersenEvUserMaxPowerNumber
 from andersen_ev.user_max_current import (
@@ -110,11 +112,106 @@ def test_native_value(
     expected_amps: float | None,
     expected_kw: float | None,
 ) -> None:
-    """Both entities show the live sysUserMaxChargeAmpSet, in A and kW."""
+    """Both entities show the user max, in A and kW."""
     mock_device.live_status = live_status
 
     assert AndersenEvUserMaxCurrentNumber(mock_coordinator, mock_device).native_value == expected_amps
     assert AndersenEvUserMaxPowerNumber(mock_coordinator, mock_device).native_value == expected_kw
+
+
+async def poll(device: KonnectDevice, status: dict) -> None:
+    """Return status from the next REST getDevice poll."""
+    with patch.object(device.api, "getDevice", AsyncMock(return_value={"status": status})):
+        await device.get_user_device()
+
+
+async def live(device: KonnectDevice, status: dict) -> None:
+    """Deliver status as a deviceStatusUpdated payload."""
+    device.apply_subscription_update(status)
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected_field", "expected_kw"),
+    [
+        pytest.param(
+            [(poll, {"userSetChargeAmpMax": 24, "sysUserMaxChargeAmpSet": 16}), (live, {"sysUserMaxChargeAmpSet": 16})],
+            "userSetChargeAmpMax",
+            5.4,
+            id="old_firmware_prefers_polled_setting",
+        ),
+        pytest.param(
+            [
+                (poll, {"userSetChargeAmpMax": 24, "sysUserMaxChargeAmpSet": 16}),
+                (live, {"sysUserMaxChargeAmpSet": 16}),
+                (poll, {"userSetChargeAmpMax": 10, "sysUserMaxChargeAmpSet": 16}),
+            ],
+            "userSetChargeAmpMax",
+            2.3,
+            id="old_firmware_follows_polled_change",
+        ),
+        pytest.param(
+            [(live, {"sysUserMaxChargeAmpSet": 16}), (poll, {"userSetChargeAmpMax": 24})],
+            "userSetChargeAmpMax",
+            5.4,
+            id="polled_setting_preferred_when_seen_after_live",
+        ),
+        pytest.param(
+            [
+                (poll, {"sysUserMaxChargeAmpSet": 32}),
+                (live, {"sysUserMaxChargeAmpSet": 32}),
+                (live, {"sysUserMaxChargeAmpSet": 16}),
+            ],
+            "sysUserMaxChargeAmpSet",
+            3.6,
+            id="new_firmware_follows_live_change",
+        ),
+        pytest.param(
+            [
+                (poll, {"userSetChargeAmpMax": 24}),
+                (live, {"sysUserMaxChargeAmpSet": 24}),
+                (live, {"sysUserMaxChargeAmpSet": 16}),
+                (poll, {"userSetChargeAmpMax": 24}),
+            ],
+            "sysUserMaxChargeAmpSet",
+            3.6,
+            id="live_change_wins_over_unchanged_poll",
+        ),
+        pytest.param(
+            [
+                (poll, {"userSetChargeAmpMax": 24}),
+                (live, {"sysUserMaxChargeAmpSet": 24}),
+                (live, {"sysUserMaxChargeAmpSet": 16}),
+                (poll, {"userSetChargeAmpMax": 10}),
+            ],
+            "userSetChargeAmpMax",
+            2.3,
+            id="later_polled_change_wins",
+        ),
+        pytest.param(
+            [(poll, {"userSetChargeAmpMax": None}), (live, {"sysUserMaxChargeAmpSet": 16})],
+            "sysUserMaxChargeAmpSet",
+            3.6,
+            id="null_polled_setting_ignored",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_native_value_follows_last_changed_field(
+    mock_coordinator: MagicMock,
+    updates: list[tuple[Callable[[KonnectDevice, dict], Awaitable[None]], dict]],
+    expected_field: str,
+    expected_kw: float,
+) -> None:
+    """The user max is read from whichever of the polled and live fields last changed."""
+    device = KonnectDevice(api=MagicMock(), device_id="test_device_123", friendly_name="Test Charger", user_lock=False)
+    device.apply_subscription_update({"cfgChargeAmpMax": 32})
+    mock_coordinator.data = [device]
+
+    for update, status in updates:
+        await update(device, status)
+
+    assert device.user_max_amps_field == expected_field
+    assert AndersenEvUserMaxPowerNumber(mock_coordinator, device).native_value == expected_kw
 
 
 @pytest.mark.parametrize(

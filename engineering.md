@@ -258,6 +258,7 @@ load:  sliderKw = round(solarMaxGridChargePercent / 100 × maxPower, 2 decimals)
 
 - **Read:** it is in the `deviceStatus` selection of the `getDevice` GraphQL query and in the `deviceStatusUpdated` subscription, so you get the initial value and live changes over GraphQL.
 - **Write:** the app's `setUserPowerMax` helper sends `runAEVCommand` with `functionName: "userAmpSet"` and `params: {"userSetChargeAmpMax": <amps>}`. The charger then reports the new value back as `sysUserMaxChargeAmpSet` (inferred; the bundle can't show the firmware side).
+- **Older firmware:** on a Thurlestone (`a2particle`, `sysFwVersion` 314) `sysUserMaxChargeAmpSet` stays at 16 whatever is set, while the REST `getDevice` status reports the setting as `userSetChargeAmpMax`. The A3 (`a2refresh`, `sysFwVersion` 630) updates `sysUserMaxChargeAmpSet` within seconds and doesn't report `userSetChargeAmpMax`. The app only reads `sysUserMaxChargeAmpSet`, so on older firmware its Power Settings slider is stuck too. The integration uses whichever of the two last changed (issue #132).
 - **Fallback in the UI:** the Power Settings screen shows `sysUserMaxChargeAmpSet` and falls back to `cfgChargeAmpMax` when it is null or 0.
 - **`cfgChargeAmpMax`:** this is the installer-configured hardware limit. It is not in the `getDevice` GraphQL query text, so it must arrive in the status object through the REST `getDevice` call (not confirmed). The app builds it alongside `cfgAFAmpMax` and `cfgAFEnable` in what looks like the installer setup flow, probably over Bluetooth (transport not confirmed).
 
