@@ -48,7 +48,7 @@ Unique IDs are `<device id>_<suffix>`, using the suffix in the Entity column. En
 | Entity | Type | Data source type | Data source field | Update field | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Lock (`lock`) | Lock | GraphQL subscription | `sysUserLock` | `runAEVCommand` `userLock` / `userUnlock` | Shows `locking` / `unlocking` until the charger confirms, usually within seconds. Reverts with a warning if not confirmed within 5 minutes |
-| Charge now (`charge_now`) | Button | — | — | `runAEVCommand` `chargeNow` | Starts charging now, ignoring schedules |
+| Charge now (`charge_now`) | Button | — | — | `runAEVCommand` `chargeNow`, then `userForceStart` | Starts charging now, ignoring schedules |
 | Stop charging (`stop_charging`) | Button | — | — | `runAEVCommand` `userForceStop`, then `stopChargeNow` | Has no effect while Charge outside schedule is on and solar is available |
 | Schedule {n} (`schedule_{index}`) | Switch, config | GraphQL subscription | `scheduleSlotsArray[n].enabled` | `setSchedules` with the slot as `sch{n}` | One switch per slot, created at startup from the `getDevice` query. The slot's name from the app (`deviceInfo.schedule{n}Name`) is in the `schedule_name` attribute |
 | Boost (`solar_boost`) | Switch | GraphQL subscription | `solarOverride` | `setSolar(override)` | Ignores solar settings and charges at full rate while a charge is in progress. It doesn't start a charge. Andersen ends a boost after about 2 hours |

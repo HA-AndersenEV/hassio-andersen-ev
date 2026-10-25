@@ -116,8 +116,8 @@ own device automatically - no per-charger configuration is needed.
 See [Features](#features) above, [ENTITIES.md](ENTITIES.md) for the full entity list, and
 [Services](#services) for the service calls. In short:
 * A **lock** entity per charger to enable/disable charging (`userLock`/`userUnlock`).
-* **Charge now** and **Stop charging** buttons per charger (`chargeNow`, and
-  `userForceStop` + `stopChargeNow`).
+* **Charge now** and **Stop charging** buttons per charger (`chargeNow` + `userForceStart`,
+  and `userForceStop` + `stopChargeNow`).
 * A **switch** entity per charging schedule slot, so each schedule can be turned on or off
   independently.
 * **Solar charging** switches and a grid source power number, mirroring the app's Power source

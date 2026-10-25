@@ -113,7 +113,7 @@ The same names exist in the v98 bundle (checked in the raw bytes).
 Notes:
 
 - Pressing **Stop charging** sends `userForceStop` and then `stopChargeNow`.
-- Pressing **Charge now** sends `chargeNow` with no params, then the app refreshes the device every 30 seconds.
+- Pressing **Charge now** sends `chargeNow`, then `userForceStart` once that returns, and refreshes the device every 30 seconds. `userForceStart` clears the force stop left by **Stop charging**; without it the charger will not start again after a stop.
 
 This means we should be able to replicate the chargeNow and stop charging buttons now.
 
