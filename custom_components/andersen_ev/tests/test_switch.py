@@ -9,7 +9,12 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.util import dt as dt_util
 
 from andersen_ev.konnect.exceptions import AndersenAuthError
-from andersen_ev.switch import AndersenEvGovernmentScheduleSwitch, AndersenEvScheduleSwitch, async_setup_entry
+from andersen_ev.switch import (
+    AndersenEvGovernmentScheduleSwitch,
+    AndersenEvScheduleSwitch,
+    async_setup_entry,
+    schedule_slot_count,
+)
 
 # Disconnected for longer than LIVE_STATUS_TIMEOUT, so live entities are unavailable.
 DISCONNECTED_LONG_AGO = dt_util.utcnow() - timedelta(minutes=6)
@@ -688,3 +693,87 @@ class TestSendSetSchedulesMutation:
         result = await switch._send_set_schedules_mutation({"sch0": {"enabled": True}}, enabled=True)
 
         assert result is False
+
+
+TEN_SLOTS = [{"startHour": hour, "enabled": False} for hour in range(10)]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        pytest.param({"sysFwVersion": 630}, 10, id="new_firmware"),
+        pytest.param({"sysFwVersion": "630"}, 10, id="new_firmware_as_text"),
+        pytest.param({"sysFwVersion": 500}, 10, id="first_new_firmware"),
+        pytest.param({"sysFwVersion": 499}, 5, id="last_old_firmware"),
+        pytest.param({"sysFwVersion": "314"}, 5, id="old_firmware_as_text"),
+        pytest.param({"sysFwVersion": None}, 5, id="null_counts_as_old"),
+        pytest.param({}, 5, id="missing_counts_as_old"),
+        pytest.param({"sysFwVersion": "unknown"}, 5, id="unreadable_counts_as_old"),
+    ],
+)
+def test_schedule_slot_count(status: dict, expected: int) -> None:
+    """As in the app, firmware below 500 uses 5 schedule slots and newer firmware 10."""
+    assert schedule_slot_count(status) == expected
+
+
+@pytest.mark.parametrize(
+    ("fw_version", "expected_slots"),
+    [
+        pytest.param("314", [2, 3, 4], id="old_firmware"),
+        pytest.param("630", [2, 3, 4, 5, 6, 7, 8, 9], id="new_firmware"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_setup_creates_switches_for_the_slots_the_firmware_uses(
+    fw_version: str, expected_slots: list[int]
+) -> None:
+    """Old firmware only gets switches for the 5 slots the app shows."""
+    device = _make_device()
+    device.get_device_info = AsyncMock(
+        return_value={
+            "deviceInfo": SLOT_NAMES,
+            "deviceStatus": {"sysFwVersion": fw_version, "scheduleSlotsArray": TEN_SLOTS},
+        }
+    )
+    entry = MagicMock()
+    entry.runtime_data = _make_coordinator([device])
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(MagicMock(), entry, async_add_entities)
+
+    entities = async_add_entities.call_args.args[0]
+    schedule_switches = [e for e in entities if isinstance(e, AndersenEvScheduleSwitch)]
+    assert isinstance(schedule_switches[0], AndersenEvGovernmentScheduleSwitch)
+    assert [e._schedule_index for e in schedule_switches[1:]] == expected_slots
+
+
+@pytest.mark.parametrize(
+    ("fw_version", "expected_keys"),
+    [
+        pytest.param("314", [f"sch{idx}" for idx in range(5)], id="old_firmware"),
+        pytest.param("630", [f"sch{idx}" for idx in range(10)], id="new_firmware"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_sends_the_slots_the_firmware_uses(fw_version: str, expected_keys: list[str]) -> None:
+    """As in the app, old firmware is sent 5 slots and newer firmware 10."""
+    device = _make_device(live_status={"sysFwVersion": fw_version, "scheduleSlotsArray": TEN_SLOTS})
+    switch = _make_switch(_make_coordinator([device]), device, index=2)
+    switch._send_set_schedules_mutation = AsyncMock(return_value=True)
+
+    await switch._set_schedule_enabled(True)
+
+    assert list(switch._send_set_schedules_mutation.call_args.args[0]) == expected_keys
+
+
+@pytest.mark.asyncio
+async def test_update_of_slot_old_firmware_doesnt_use_raises() -> None:
+    """A switch left over for slot 5 or above raises on old firmware instead of sending."""
+    device = _make_device(live_status={"sysFwVersion": "314", "scheduleSlotsArray": TEN_SLOTS})
+    switch = _make_switch(_make_coordinator([device]), device, index=7)
+    switch._send_set_schedules_mutation = AsyncMock(return_value=True)
+
+    with pytest.raises(HomeAssistantError):
+        await switch._set_schedule_enabled(True)
+
+    switch._send_set_schedules_mutation.assert_not_awaited()

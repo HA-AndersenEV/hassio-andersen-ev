@@ -19,6 +19,7 @@ Notes from reverse engineering the Andersen Android app's React Native bundle
 7. [Converting the slider (kW) to `maxGridChargePercent`](#7-converting-the-slider-kw-to-maxgridchargepercent)
    - [Where `sysUserMaxChargeAmpSet` comes from](#where-sysusermaxchargeampset-comes-from)
 8. ["Charge now" and "Stop charging" visibility](#8-charge-now-and-stop-charging-visibility)
+   - [What each flow sends](#what-each-flow-sends)
 9. [Other API surface found in the bundle](#9-other-api-surface-found-in-the-bundle)
    - [GraphQL mutations](#graphql-mutations)
    - [GraphQL queries and subscriptions](#graphql-queries-and-subscriptions)
@@ -30,6 +31,7 @@ Notes from reverse engineering the Andersen Android app's React Native bundle
     - [Order of checks](#order-of-checks)
     - [Badge text and colour](#badge-text-and-colour)
     - [Practical shortcut](#practical-shortcut)
+11. [Firmware differences](#11-firmware-differences)
 
 ---
 
@@ -280,6 +282,13 @@ The Home screen (`ChargerOverview`) computes five flags: `chargeNow`, `oldCharge
 
 `chargeState` is derived from the raw status by the app. See section 10.
 
+### What each flow sends
+
+- **Firmware below 500 (`oldChargeNow`).** Tapping Charge now opens an "Are you sure?" dialog: *"By doing this you will be able to charge your vehicle now. However it will disable all your current schedules. Desired schedules will need to be re-enabled after your charge."* Confirm sends the `setAllSchedulesDisabled` mutation and nothing else. With no schedule active the charger charges, and the schedules stay off until turned back on. There is no Stop button.
+- **Firmware 500 and above.** Charge now has no dialog. It sends `runAEVCommand` `chargeNow`, then `userForceStart` once that returns, and starts a 30 second timer (probably a status refresh; not confirmed). Schedules aren't changed. Stop sends `userForceStop`, then `stopChargeNow`.
+- **The integration** sends the newer commands whatever the firmware. Whether firmware below 500 accepts `chargeNow` and `userForceStart` hasn't been tested yet.
+- Found in `ChargerOverview`: the new button's handler calls the `chargeNow` and `forceStart` helpers from `useRunAEVCommand`; the old dialog's `onConfirm` runs a `useMutation` of app module 3447, which holds only `setAllSchedulesDisabled`.
+
 ---
 
 ## 9. Other API surface found in the bundle
@@ -378,3 +387,29 @@ A red STOPPED badge also exists. I did not find what triggers it. The `PAUSED` t
 ### Practical shortcut
 
 For a Home Assistant sensor, the GraphQL fields are enough for most states: `OFFLINE`, `LOCKED`, `FAULT`, `STANDBY`, `CONNECTED`, `CHARGING` and "waiting for solar" (`evseState` 255 with a solar-low fault bit set). Only the `SCHEDULED` versus `WONT_CHARGE` split in smart-tariff mode needs the REST fields and the undecoded branch.
+
+---
+
+## 11. Firmware differences
+
+The app's config holds these firmware constants: `oldFwVersion` 307, `fwVersionForAdvancedUse` 500, `latestA2FwVersion` 504, `latestA3FwVersion` 601 and `latestA4FwVersion` 700, with `maxScheduleCountForOld` 5 and `maxScheduleCountForNew` 10. The `latest…` values aren't read anywhere in the app code. Each check uses `sysFwVersion`, with null treated as 0.
+
+Below `fwVersionForAdvancedUse` (500):
+
+- **Charge now and Stop** use the old flow. See [What each flow sends](#what-each-flow-sends).
+- **Schedules** use 5 slots instead of 10. `getScheduleSlots` only reads `Schedule5Code` to `Schedule9Code` from 500. `getValidSchedulesArray` and the schedule saves on the government regulations and energy tariff screens build `sch0` to `sch{count - 1}`, filling unset slots from an `unsetSchedule` template. Slots 0 and 1 are the government default on both. The integration follows this: on firmware below 500 it creates switches only for slots 2 to 4 and sends only `sch0` to `sch4`.
+- **The schedule screen** also compares against `oldFwVersion` (307). What that changes wasn't worked out.
+
+Seen on real chargers:
+
+| | Thurlestone (`a2particle`) | A3 (`a2refresh`) |
+|---|---|---|
+| `sysProductId` | 30 | 50 |
+| `sysFwVersion` | 314 | 630 |
+| `sysOs` | 3.3.1 | v5.0.3 |
+| `evseFwVersion` | 5.22 | 5.70 |
+| `sysUserMaxChargeAmpSet` follows the setting | No, stays at 16 | Yes, within seconds |
+| `userSetChargeAmpMax` in the REST status | Yes, follows the setting | Not reported |
+| Raised user max applies | After a lock/unlock (reported, not checked in logs) | Straight away |
+
+The power settings screen has no firmware check. It always reads `sysUserMaxChargeAmpSet` (see [Where `sysUserMaxChargeAmpSet` comes from](#where-sysusermaxchargeampset-comes-from)).
