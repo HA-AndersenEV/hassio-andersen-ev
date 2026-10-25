@@ -27,6 +27,9 @@ PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
+# The app shows these read-only slots as one "Government default" schedule and toggles them together.
+GOVERNMENT_SLOTS = (0, 1)
+
 SOLAR_FIELD_TO_PARAM = {
     "boost": "boost",
     "solarChargeAlways": "charge_always",
@@ -57,13 +60,12 @@ async def _async_build_switches_for_device(coordinator: AndersenEvCoordinator, d
         AndersenEvSolarChargeAlwaysSwitch(coordinator, device),
         AndersenEvSolarChargeOutsideScheduleSwitch(coordinator, device),
     ]
-    for idx, _slot in enumerate(schedule_slots):
-        # Get the schedule name from deviceInfo if available
-        schedule_name_key = f"schedule{idx}Name"
-        if device_info_data.get(schedule_name_key):
-            schedule_name = device_info_data[schedule_name_key]
-        else:
-            schedule_name = f"Schedule {idx + 1}"
+    first_user_slot = 0
+    if len(schedule_slots) >= len(GOVERNMENT_SLOTS):
+        entities.append(AndersenEvGovernmentScheduleSwitch(coordinator, device))
+        first_user_slot = len(GOVERNMENT_SLOTS)
+    for idx in range(first_user_slot, len(schedule_slots)):
+        schedule_name = device_info_data.get(f"schedule{idx}Name") or f"Schedule {idx + 1}"
 
         entities.append(AndersenEvScheduleSwitch(coordinator, device, idx, schedule_name))
 
@@ -131,6 +133,7 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
         self._device = device
         self._schedule_index = index
         self._schedule_name = schedule_name
+        self._slot_indices: tuple[int, ...] = (index,)
         self._attr_translation_key = "schedule"
         self._attr_translation_placeholders = {"index": str(index + 1)}
         self._attr_unique_id = f"{device.device_id}_schedule_{index}"
@@ -168,8 +171,8 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
                 break
 
         slots = self._device.live_status.get("scheduleSlotsArray") or []
-        if len(slots) > self._schedule_index:
-            return slots[self._schedule_index]["enabled"]
+        if len(slots) > max(self._slot_indices):
+            return all(slots[idx]["enabled"] for idx in self._slot_indices)
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -182,39 +185,50 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
 
     async def _set_schedule_enabled(self, enabled: bool) -> None:
         """Set the enabled state of the schedule."""
+        # The server reads every slot's name from each update, and saves them, so the current names
+        # are fetched first. Sending stale or blank names would overwrite renames made in the app.
+        try:
+            device_info = await self._device.get_device_info()
+        except AndersenError as err:
+            raise self._schedule_update_error(err) from err
+        if not device_info or not device_info.get("deviceInfo"):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="schedule_data_unavailable",
+                translation_placeholders={"device_name": self._device.friendly_name},
+            )
+        slot_names = device_info["deviceInfo"]
+
         if "scheduleSlotsArray" in self._device.live_status:
             schedule_slots = copy.deepcopy(self._device.live_status["scheduleSlotsArray"])
-        else:
-            # Not in the coordinator data, so fetch it directly
-            try:
-                device_info = await self._device.get_device_info()
-            except AndersenError as err:
-                raise self._schedule_update_error(err) from err
-            if (
-                not device_info
-                or "deviceStatus" not in device_info
-                or "scheduleSlotsArray" not in device_info["deviceStatus"]
-            ):
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="schedule_data_unavailable",
-                    translation_placeholders={"device_name": self._device.friendly_name},
-                )
+        elif "scheduleSlotsArray" in (device_info.get("deviceStatus") or {}):
             schedule_slots = copy.deepcopy(device_info["deviceStatus"]["scheduleSlotsArray"])
+        else:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="schedule_data_unavailable",
+                translation_placeholders={"device_name": self._device.friendly_name},
+            )
 
-        if len(schedule_slots) <= self._schedule_index:
+        if len(schedule_slots) <= max(self._slot_indices):
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="schedule_index_out_of_range",
                 translation_placeholders={
-                    "index": str(self._schedule_index),
+                    "index": str(max(self._slot_indices)),
                     "device_name": self._device.friendly_name,
                 },
             )
 
-        schedule_slots[self._schedule_index]["enabled"] = enabled
-        # The API expects slots keyed as sch0, sch1, etc.
-        formatted_slots = {f"sch{self._schedule_index}": schedule_slots[self._schedule_index]}
+        # As in the app, every slot is sent, keyed as sch0, sch1, etc. The API requires name and
+        # readOnly, which the status data does not include.
+        formatted_slots = {}
+        for idx, slot in enumerate(schedule_slots):
+            if idx in self._slot_indices:
+                slot["enabled"] = enabled
+            slot["name"] = slot_names.get(f"schedule{idx}Name") or ""
+            slot["readOnly"] = idx in GOVERNMENT_SLOTS
+            formatted_slots[f"sch{idx}"] = slot
 
         try:
             success = await self._send_set_schedules_mutation(formatted_slots, enabled)
@@ -267,6 +281,18 @@ class AndersenEvScheduleSwitch(AndersenEvDeviceInfoMixin, CoordinatorEntity[Ande
             state_text,
         )
         return True
+
+
+class AndersenEvGovernmentScheduleSwitch(AndersenEvScheduleSwitch):  # pylint: disable=abstract-method
+    """The government default schedule, which the charger stores as two read-only slots."""
+
+    def __init__(self, coordinator: AndersenEvCoordinator, device) -> None:
+        """Initialize the switch."""
+        # Keeps the slot 0 switch's unique ID so existing entity IDs and history carry over.
+        super().__init__(coordinator, device, GOVERNMENT_SLOTS[0], "Government Schedule")
+        self._slot_indices = GOVERNMENT_SLOTS
+        self._attr_translation_key = "government_schedule"
+        self._attr_translation_placeholders = {}
 
 
 class AndersenEvSolarSwitch(CoordinatorEntity[AndersenEvCoordinator], SwitchEntity):  # pylint: disable=abstract-method

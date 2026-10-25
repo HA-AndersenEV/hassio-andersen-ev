@@ -250,6 +250,11 @@ query getDevice($id: ID!) {
       schedule2Name
       schedule3Name
       schedule4Name
+      schedule5Name
+      schedule6Name
+      schedule7Name
+      schedule8Name
+      schedule9Name
       address
       addressPlace
       addressDistrict
