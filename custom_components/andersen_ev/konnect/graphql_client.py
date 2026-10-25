@@ -58,6 +58,16 @@ def get_dsl_schema() -> DSLSchema:
     return DSLSchema(schema)
 
 
+def has_unauthenticated_error(err: TransportQueryError) -> bool:
+    """Return True if any error in the response has code UNAUTHENTICATED."""
+    for error in err.errors or []:
+        if not isinstance(error, dict):
+            continue
+        if error.get("extensions", {}).get("code") == "UNAUTHENTICATED":
+            return True
+    return False
+
+
 # Preload schema at module import time to avoid blocking I/O in async context
 _PRELOADED_SCHEMA = get_dsl_schema()
 
@@ -199,7 +209,7 @@ class GraphQLClient:
             _LOGGER.debug("Token expired during %s, refreshing and retrying", label)
             return await self._refresh_and_retry(document, variable_values, wire_op_name, label)
         except TransportQueryError as err:
-            if not self._has_unauthenticated_error(err):
+            if not has_unauthenticated_error(err):
                 _LOGGER.warning("GraphQL errors in %s: %s", label, err.errors)
                 return None
             _LOGGER.debug("Authentication error during %s, refreshing and retrying", label)
@@ -253,7 +263,7 @@ class GraphQLClient:
         document = dsl_gql(
             DSLMutation(
                 ds.Mutation.setSolar.args(**args).select(
-                    ds.SolarSettings.return_value,
+                    ds.CallFunctionResponse.return_value,
                 )
             )
         )
@@ -265,16 +275,6 @@ class GraphQLClient:
 
         _LOGGER.debug("GraphQL setSolar response: %s", result)
         return True
-
-    @staticmethod
-    def _has_unauthenticated_error(err: TransportQueryError) -> bool:
-        """Return True if any error in the response has code UNAUTHENTICATED."""
-        for error in err.errors or []:
-            if not isinstance(error, dict):
-                continue
-            if error.get("extensions", {}).get("code") == "UNAUTHENTICATED":
-                return True
-        return False
 
     async def _refresh_and_retry(
         self,

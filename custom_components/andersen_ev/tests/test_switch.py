@@ -1,27 +1,41 @@
 """Tests for the Andersen EV switch platform."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from andersen_ev.konnect.exceptions import AndersenAuthError
-from andersen_ev.switch import AndersenEvScheduleSwitch, async_setup_entry
+from andersen_ev.switch import AndersenEvGovernmentScheduleSwitch, AndersenEvScheduleSwitch, async_setup_entry
+
+# Disconnected for longer than LIVE_STATUS_TIMEOUT, so live entities are unavailable.
+DISCONNECTED_LONG_AGO = dt_util.utcnow() - timedelta(minutes=6)
+
+
+SLOT_NAMES = {
+    "schedule0Name": "Government default",
+    "schedule1Name": "Government default",
+    "schedule2Name": "Overnight",
+}
 
 
 def _make_device(
     device_id="device_1",
     friendly_name="Device",
     status_available=True,
-    last_status=None,
+    live_status=None,
 ):
     """Build a mock KonnectDevice."""
     device = MagicMock()
     device.device_id = device_id
     device.friendly_name = friendly_name
-    device.status_available = status_available
-    device.last_status = last_status
+    device.subscription_disconnected_since = None if status_available else DISCONNECTED_LONG_AGO
+    device.live_status = live_status or {}
+    # Schedule updates fetch the current slot names before sending.
+    device.get_device_info = AsyncMock(return_value={"deviceInfo": SLOT_NAMES})
     return device
 
 
@@ -44,12 +58,17 @@ class TestAsyncSetupEntry:
     """Tests for async_setup_entry()."""
 
     @pytest.mark.asyncio
-    async def test_creates_switch_per_schedule_slot_with_custom_and_default_names(self):
+    async def test_creates_government_switch_and_one_switch_per_user_slot(self):
+        """Slots 0 and 1 share one Government default switch; later slots get their own."""
         device = _make_device()
         device.get_device_info = AsyncMock(
             return_value={
-                "deviceInfo": {"schedule0Name": "Overnight"},
-                "deviceStatus": {"scheduleSlotsArray": [{"enabled": True}, {"enabled": False}]},
+                "deviceInfo": {
+                    "schedule0Name": "Government default",
+                    "schedule1Name": "Government default",
+                    "schedule2Name": "Overnight",
+                },
+                "deviceStatus": {"scheduleSlotsArray": [{"enabled": False}] * 4},
             }
         )
         coordinator = _make_coordinator([device])
@@ -61,8 +80,16 @@ class TestAsyncSetupEntry:
 
         entities = async_add_entities.call_args.args[0]
         schedule_switches = [e for e in entities if isinstance(e, AndersenEvScheduleSwitch)]
-        assert len(entities) == 5
-        assert [e._schedule_name for e in schedule_switches] == ["Overnight", "Schedule 2"]
+        assert len(entities) == 6
+        assert isinstance(schedule_switches[0], AndersenEvGovernmentScheduleSwitch)
+        assert [e.unique_id for e in schedule_switches] == [
+            "device_1_schedule_0",
+            "device_1_schedule_2",
+            "device_1_schedule_3",
+        ]
+        assert [e.translation_key for e in schedule_switches] == ["government_schedule", "schedule", "schedule"]
+        assert [e._schedule_name for e in schedule_switches] == ["Government Schedule", "Overnight", "Schedule 4"]
+        assert [e._slot_indices for e in schedule_switches] == [(0, 1), (2,), (3,)]
 
     @pytest.mark.asyncio
     async def test_missing_device_info_skips_device(self):
@@ -158,7 +185,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 5
+        assert len(new_entities) == 4
         assert all(entity._device.device_id == "device_2" for entity in new_entities)
 
     @pytest.mark.asyncio
@@ -296,7 +323,7 @@ class TestUpdateDeviceInfoFromStatus:
     """Tests for AndersenEvScheduleSwitch._update_device_info_from_status()."""
 
     def test_known_product_id_maps_to_the_marketed_model_name(self):
-        device = _make_device(last_status={"sysProductName": "Thurlestone", "sysProductId": 30})
+        device = _make_device(live_status={"sysProductName": "Thurlestone", "sysProductId": 30})
         coordinator = _make_coordinator([device])
 
         switch = _make_switch(coordinator, device)
@@ -304,7 +331,7 @@ class TestUpdateDeviceInfoFromStatus:
         assert switch._attr_device_info["model"] == "A2"
 
     def test_integer_product_id_rendered_as_string(self):
-        device = _make_device(last_status={"sysProductId": 99})
+        device = _make_device(live_status={"sysProductId": 99})
         coordinator = _make_coordinator([device])
 
         switch = _make_switch(coordinator, device)
@@ -312,7 +339,7 @@ class TestUpdateDeviceInfoFromStatus:
         assert switch._attr_device_info["model"] == "99"
 
     def test_hw_fw_and_serial_populated(self):
-        device = _make_device(last_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
+        device = _make_device(live_status={"sysHwVersion": "4", "sysFwVersion": "314", "konnectSerial": "1234567890"})
         coordinator = _make_coordinator([device])
 
         switch = _make_switch(coordinator, device)
@@ -322,7 +349,7 @@ class TestUpdateDeviceInfoFromStatus:
         assert switch._attr_device_info["serial_number"] == "1234567890"
 
     def test_no_status_keeps_default_device_info(self):
-        device = _make_device(last_status=None)
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
 
         switch = _make_switch(coordinator, device)
@@ -362,32 +389,32 @@ class TestIsOn:
     """Tests for AndersenEvScheduleSwitch.is_on."""
 
     def test_returns_enabled_from_schedule_slots_array(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": True}]})
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": True}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
 
         assert switch.is_on is True
 
     def test_returns_disabled_from_schedule_slots_array(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": False}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
 
         assert switch.is_on is False
 
-    def test_no_last_status_defaults_false(self):
-        device = _make_device(last_status=None)
+    def test_unknown_before_first_payload(self):
+        device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
 
-        assert switch.is_on is False
+        assert switch.is_on is None
 
-    def test_index_out_of_range_defaults_false(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": True}]})
+    def test_index_out_of_range_is_unknown(self):
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": True}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=5)
 
-        assert switch.is_on is False
+        assert switch.is_on is None
 
 
 class TestAsyncTurnOnOff:
@@ -420,8 +447,9 @@ class TestSetScheduleEnabled:
     """Tests for AndersenEvScheduleSwitch._set_schedule_enabled()."""
 
     @pytest.mark.asyncio
-    async def test_success_with_existing_status_updates_state_and_refreshes(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
+    async def test_success_sends_slot_and_waits_for_live_status(self):
+        """The switch changes only when the subscription reports the new slot, so nothing is updated locally."""
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": False}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
         switch._send_set_schedules_mutation = AsyncMock(return_value=True)
@@ -430,15 +458,54 @@ class TestSetScheduleEnabled:
 
         switch._send_set_schedules_mutation.assert_awaited_once()
         formatted_slots = switch._send_set_schedules_mutation.call_args.args[0]
-        assert formatted_slots == {"sch0": {"enabled": True}}
-        assert device.last_status["scheduleSlotsArray"][0]["enabled"] is True
-        switch.async_write_ha_state.assert_called_once()
-        coordinator.async_request_refresh.assert_awaited_once()
+        assert formatted_slots == {"sch0": {"enabled": True, "name": "Government default", "readOnly": True}}
+        assert device.live_status["scheduleSlotsArray"][0]["enabled"] is False
+        switch.async_write_ha_state.assert_not_called()
+        coordinator.async_request_refresh.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_sends_every_slot_with_current_names(self) -> None:
+        """The server reads every slot's name and readOnly, so all slots are sent as the app does."""
+        slots = [{"startHour": hour, "enabled": False} for hour in (22, 11, 2, 7)]
+        device = _make_device(live_status={"scheduleSlotsArray": slots})
+        switch = _make_switch(_make_coordinator([device]), device, index=2)
+        switch._send_set_schedules_mutation = AsyncMock(return_value=True)
+
+        await switch._set_schedule_enabled(True)
+
+        assert switch._send_set_schedules_mutation.call_args.args[0] == {
+            "sch0": {"startHour": 22, "enabled": False, "name": "Government default", "readOnly": True},
+            "sch1": {"startHour": 11, "enabled": False, "name": "Government default", "readOnly": True},
+            "sch2": {"startHour": 2, "enabled": True, "name": "Overnight", "readOnly": False},
+            "sch3": {"startHour": 7, "enabled": False, "name": "", "readOnly": False},
+        }
+
+    @pytest.mark.parametrize(
+        "device_info",
+        [
+            pytest.param(None, id="fetch_failed"),
+            pytest.param({"deviceStatus": {"scheduleSlotsArray": [{"enabled": False}]}}, id="no_device_info"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_missing_names_raises_without_sending(self, device_info: dict | None) -> None:
+        """Without the current names, sending would blank them on the charger."""
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": False}]})
+        device.get_device_info = AsyncMock(return_value=device_info)
+        switch = _make_switch(_make_coordinator([device]), device, index=0)
+        switch._send_set_schedules_mutation = AsyncMock(return_value=True)
+
+        with pytest.raises(HomeAssistantError):
+            await switch._set_schedule_enabled(True)
+
+        switch._send_set_schedules_mutation.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_existing_status_fetches_from_api(self):
-        device = _make_device(last_status=None)
-        device.get_device_info = AsyncMock(return_value={"deviceStatus": {"scheduleSlotsArray": [{"enabled": False}]}})
+        device = _make_device(live_status=None)
+        device.get_device_info = AsyncMock(
+            return_value={"deviceInfo": SLOT_NAMES, "deviceStatus": {"scheduleSlotsArray": [{"enabled": False}]}}
+        )
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
         switch._send_set_schedules_mutation = AsyncMock(return_value=True)
@@ -446,13 +513,14 @@ class TestSetScheduleEnabled:
         await switch._set_schedule_enabled(True)
 
         device.get_device_info.assert_awaited_once()
+        assert switch._send_set_schedules_mutation.call_args.args[0]["sch0"]["enabled"] is True
         switch._send_set_schedules_mutation.assert_awaited_once()
-        coordinator.async_request_refresh.assert_awaited_once()
+        coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_api_fetch_missing_schedule_data_raises(self):
-        device = _make_device(last_status=None)
-        device.get_device_info = AsyncMock(return_value={"deviceStatus": {}})
+        device = _make_device(live_status=None)
+        device.get_device_info = AsyncMock(return_value={"deviceInfo": SLOT_NAMES, "deviceStatus": {}})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
 
@@ -461,7 +529,7 @@ class TestSetScheduleEnabled:
 
     @pytest.mark.asyncio
     async def test_index_out_of_range_raises(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": False}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=5)
 
@@ -472,7 +540,7 @@ class TestSetScheduleEnabled:
 
     @pytest.mark.asyncio
     async def test_mutation_failure_raises(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": False}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
         switch._send_set_schedules_mutation = AsyncMock(return_value=False)
@@ -484,7 +552,7 @@ class TestSetScheduleEnabled:
 
     @pytest.mark.asyncio
     async def test_api_error_raises_update_error(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": False}]})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
         switch._send_set_schedules_mutation = AsyncMock(side_effect=AndersenAuthError("expired"))
@@ -496,40 +564,6 @@ class TestSetScheduleEnabled:
         coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_success_adds_schedule_slots_array_when_removed_concurrently(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}], "online": True})
-        coordinator = _make_coordinator([device])
-        switch = _make_switch(coordinator, device, index=0)
-
-        async def mutate_and_succeed(*_args, **_kwargs):
-            del device.last_status["scheduleSlotsArray"]
-            return True
-
-        switch._send_set_schedules_mutation = AsyncMock(side_effect=mutate_and_succeed)
-
-        await switch._set_schedule_enabled(True)
-
-        assert device.last_status["scheduleSlotsArray"][0]["enabled"] is True
-        coordinator.async_request_refresh.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_success_extends_schedule_slots_array_when_shortened_concurrently(self):
-        device = _make_device(last_status={"scheduleSlotsArray": [{"enabled": False}]})
-        coordinator = _make_coordinator([device])
-        switch = _make_switch(coordinator, device, index=0)
-
-        async def mutate_and_succeed(*_args, **_kwargs):
-            device.last_status["scheduleSlotsArray"] = []
-            return True
-
-        switch._send_set_schedules_mutation = AsyncMock(side_effect=mutate_and_succeed)
-
-        await switch._set_schedule_enabled(True)
-
-        assert device.last_status["scheduleSlotsArray"][0]["enabled"] is True
-        coordinator.async_request_refresh.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_formatted_slots_are_deep_copied_from_source(self):
         captured = {}
 
@@ -538,7 +572,7 @@ class TestSetScheduleEnabled:
             return True
 
         original_slots = [{"enabled": False, "start": "08:00"}]
-        device = _make_device(last_status={"scheduleSlotsArray": original_slots})
+        device = _make_device(live_status={"scheduleSlotsArray": original_slots})
         coordinator = _make_coordinator([device])
         switch = _make_switch(coordinator, device, index=0)
         switch._send_set_schedules_mutation = AsyncMock(side_effect=capture_mutation)
@@ -547,6 +581,64 @@ class TestSetScheduleEnabled:
 
         captured["slots"]["sch0"]["start"] = "99:99"
         assert original_slots[0]["start"] == "08:00"
+
+
+class TestGovernmentScheduleSwitch:
+    """Tests for AndersenEvGovernmentScheduleSwitch, which covers slots 0 and 1."""
+
+    @staticmethod
+    def _make_government_switch(device):
+        switch = AndersenEvGovernmentScheduleSwitch(_make_coordinator([device]), device)
+        switch.async_write_ha_state = MagicMock()
+        return switch
+
+    @pytest.mark.parametrize(
+        ("slot_0", "slot_1", "expected"),
+        [
+            pytest.param(True, True, True, id="both_on"),
+            pytest.param(True, False, False, id="only_slot_0_on"),
+            pytest.param(False, False, False, id="both_off"),
+        ],
+    )
+    def test_is_on_only_when_both_slots_are_on(self, slot_0: bool, slot_1: bool, expected: bool) -> None:
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": slot_0}, {"enabled": slot_1}]})
+
+        assert self._make_government_switch(device).is_on is expected
+
+    def test_is_on_unknown_without_both_slots(self) -> None:
+        device = _make_device(live_status={"scheduleSlotsArray": [{"enabled": True}]})
+
+        assert self._make_government_switch(device).is_on is None
+
+    def test_keeps_slot_0_unique_id(self) -> None:
+        """Existing slot 0 entities keep their entity ID and history."""
+        switch = self._make_government_switch(_make_device())
+
+        assert switch.unique_id == "device_1_schedule_0"
+        assert switch.translation_key == "government_schedule"
+
+    @pytest.mark.asyncio
+    async def test_toggles_both_slots_in_one_update(self) -> None:
+        device = _make_device(
+            live_status={
+                "scheduleSlotsArray": [
+                    {"startHour": 22, "enabled": False},
+                    {"startHour": 11, "enabled": False},
+                    {"startHour": 2, "enabled": True},
+                ]
+            }
+        )
+        switch = self._make_government_switch(device)
+        switch._send_set_schedules_mutation = AsyncMock(return_value=True)
+
+        await switch._set_schedule_enabled(True)
+
+        switch._send_set_schedules_mutation.assert_awaited_once()
+        assert switch._send_set_schedules_mutation.call_args.args[0] == {
+            "sch0": {"startHour": 22, "enabled": True, "name": "Government default", "readOnly": True},
+            "sch1": {"startHour": 11, "enabled": True, "name": "Government default", "readOnly": True},
+            "sch2": {"startHour": 2, "enabled": True, "name": "Overnight", "readOnly": False},
+        }
 
 
 class TestSendSetSchedulesMutation:

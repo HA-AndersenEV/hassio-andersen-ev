@@ -1,13 +1,19 @@
 """Tests for the Andersen EV button platform."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
 from andersen_ev.button import BUTTONS, AndersenEvButton, async_setup_entry
 
 CHARGE_NOW, STOP_CHARGING = BUTTONS
+
+
+# Disconnected for longer than LIVE_STATUS_TIMEOUT, so live entities are unavailable.
+DISCONNECTED_LONG_AGO = dt_util.utcnow() - timedelta(minutes=6)
 
 
 def _make_device(device_id="device_1", friendly_name="Device", status_available=True):
@@ -15,8 +21,8 @@ def _make_device(device_id="device_1", friendly_name="Device", status_available=
     device = MagicMock()
     device.device_id = device_id
     device.friendly_name = friendly_name
-    device.status_available = status_available
-    device.last_status = None
+    device.subscription_disconnected_since = None if status_available else DISCONNECTED_LONG_AGO
+    device.live_status = {}
     device.charge_now = AsyncMock(return_value=True)
     device.stop_charging = AsyncMock(return_value=True)
     return device
@@ -87,7 +93,7 @@ class TestAvailability:
         ("last_update_success", "status_available", "expected"),
         [
             pytest.param(True, True, True, id="available"),
-            pytest.param(False, True, False, id="update_failed"),
+            pytest.param(False, True, True, id="polling_failed"),
             pytest.param(True, False, False, id="status_unavailable"),
         ],
     )
@@ -118,7 +124,7 @@ class TestPress:
         ],
     )
     @pytest.mark.asyncio
-    async def test_press_sends_command_and_refreshes(self, description, method: str):
+    async def test_press_sends_command_without_refresh(self, description, method: str):
         device = _make_device()
         coordinator = _make_coordinator([device])
         button = AndersenEvButton(coordinator, device, description)
@@ -126,7 +132,7 @@ class TestPress:
         await button.async_press()
 
         getattr(device, method).assert_awaited_once()
-        coordinator.async_request_refresh.assert_awaited_once()
+        coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.parametrize(
         ("description", "method", "translation_key"),

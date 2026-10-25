@@ -113,7 +113,7 @@ The same names exist in the v98 bundle (checked in the raw bytes).
 Notes:
 
 - Pressing **Stop charging** sends `userForceStop` and then `stopChargeNow`.
-- Pressing **Charge now** sends `chargeNow` with no params, then the app refreshes the device every 30 seconds.
+- Pressing **Charge now** sends `chargeNow`, then `userForceStart` once that returns, and refreshes the device every 30 seconds. `userForceStart` clears the force stop left by **Stop charging**; without it the charger will not start again after a stop.
 
 This means we should be able to replicate the chargeNow and stop charging buttons now.
 
@@ -148,7 +148,8 @@ The Power source screen's Save button sends:
 { deviceId, chargeAlways, maxGridChargePercent: round(sliderKw / maxPower * 100), chargeOutsideSchedules }
 ```
 
-- `sysScheduleLock` (status) is the **inverse** of "Charge outside schedule". `chargeOutsideSchedules: true` should correspond to `sysScheduleLock: false`
+- The current setting is `chargeOutsideSchedules`, on `DeviceStatus` (query and `deviceStatusUpdated` subscription) and `DeviceInfo`. It matches the app's `info.ChargeOutsideSchedules`.
+- `sysScheduleLock` is **not** the setting. It means a schedule is currently blocking charging: it went `false` when Charge now was pressed and back to `true` when charging stopped, while "Charge outside schedule" stayed off (tested 24 Oct 2026).
 - The other arguments are nullable, but we need to confirm behaviour still
 - chargeOutsideSchedules only works on the `graphql-mobile` host (section 2).
 

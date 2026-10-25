@@ -55,7 +55,6 @@
       "charge_power": { "name": "Charge Power" },
       "charge_power_max": { "name": "Max Charge Power" },
       "solar_power": { "name": "Solar Power" },
-      "grid_power": { "name": "Grid Power" },
       "current_charge_energy": { "name": "Current Session Energy" },
       "current_solar_energy": { "name": "Current Session Solar Energy" },
       "current_grid_energy": { "name": "Current Session Grid Energy" },
@@ -63,6 +62,7 @@
     },
     "switch": {
       "schedule": { "name": "Schedule {index}" },
+      "government_schedule": { "name": "Government Schedule" },
       "boost": { "name": "Boost" },
       "solar_charge_always": { "name": "Supplement with grid power" },
       "solar_charge_outside_schedules": { "name": "Charge outside schedule" }
@@ -100,6 +100,10 @@
     "user_max_current_error": { "message": "Failed to set the max charge rate for {device_name}: {error}" }
   },
   "issues": {
+    "government_schedule_merged": {
+      "title": "Government schedule switches merged",
+      "description": "The charger's government default schedule is stored as two time slots, which the Andersen app turns on and off together. Home Assistant now shows them as one **Government Schedule** switch ({government_entities}), which kept the entity ID of the first slot's switch.\n\nThe second slot's switch has been removed: {removed_entities}. Update any automations, scripts or dashboards that used it to use the Government Schedule switch instead, then dismiss this message."
+    },
     "api_shape_changed": {
       "title": "Andersen API response format has changed",
       "description": "The Andersen EV cloud API returned data in an unexpected format. This usually means Andersen changed their API and the integration may need to be updated. Please check for an integration update, or report this issue if none is available."
