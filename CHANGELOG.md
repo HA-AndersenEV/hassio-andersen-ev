@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.16.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.15.0...v0.16.0) (2026-10-25)
+
+
+### Features
+
+* add a charge status sensor matching the app's status badge ([#146](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/146)) ([2c3726d](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/2c3726dc299ba335e009647f0733a440fc40c241))
+
+
+### Bug Fixes
+
+* restart charging when Charge now is pressed after Stop charging ([cb21161](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/cb21161e24ff1fd3cc7583025b3300e2642e271c))
+* schedule switches failing since Andersen's setSchedules API change ([cb21161](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/cb21161e24ff1fd3cc7583025b3300e2642e271c))
+* show the two government default slots as one Government Schedule switch ([cb21161](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/cb21161e24ff1fd3cc7583025b3300e2642e271c))
+* use 5 schedule slots on firmware below 500, as the app does ([00ecebb](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/00ecebbf898d4b7b15cbd505f663252be7e32012))
+* user max power snapping back on firmware that doesn't update sysUserMaxChargeAmpSet ([00ecebb](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/00ecebbf898d4b7b15cbd505f663252be7e32012))
+
 ## [0.15.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.12.2...v0.15.0) (2026-10-24)
 
 
