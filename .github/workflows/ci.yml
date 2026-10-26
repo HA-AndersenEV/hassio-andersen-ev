@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"
+      # The version comes from requirements-dev.txt, which Dependabot keeps up to date.
       - name: Install ruff
-        run: pip install ruff==0.15.0
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          version-file: requirements-dev.txt
+          args: --version
       - name: Check with ruff
         run: ruff check --config custom_components/andersen_ev/ruff.toml custom_components/andersen_ev
       - name: Check formatting with ruff
