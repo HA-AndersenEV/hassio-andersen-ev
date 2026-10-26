@@ -42,7 +42,7 @@ def _make_coordinator(client=None, hass=None):
     coordinator._live_status_received = {}
     coordinator._live_timeout_unsubs = {}
     coordinator.hass = hass if hass is not None else MagicMock()
-    coordinator.config_entry = MagicMock()
+    coordinator.config_entry = MagicMock(entry_id="test_entry_id")
     setattr(coordinator, "async_start_subscriptions", MagicMock())
     return coordinator
 
@@ -306,14 +306,14 @@ class TestMakeStaleDeviceListener:
         mock_registry = MagicMock()
         mock_registry_entry = MagicMock()
         mock_registry_entry.id = "registry_entry_1"
-        mock_registry.async_get_device.return_value = mock_registry_entry
+        mock_registry.async_get_device_by_identifier.return_value = mock_registry_entry
 
         with patch("andersen_ev.dr.async_get", return_value=mock_registry):
             listener = _make_stale_device_listener(hass, coordinator)
             coordinator.data = [device_a]
             listener()
 
-        mock_registry.async_get_device.assert_called_once_with(identifiers={(DOMAIN, "device_2")})
+        mock_registry.async_get_device_by_identifier.assert_called_once_with((DOMAIN, "device_2"), "test_entry_id")
         mock_registry.async_remove_device.assert_called_once_with("registry_entry_1")
 
     def test_no_change_removes_nothing(self):
@@ -335,7 +335,7 @@ class TestMakeStaleDeviceListener:
         coordinator.data = [device_a]
         hass = MagicMock()
         mock_registry = MagicMock()
-        mock_registry.async_get_device.return_value = None
+        mock_registry.async_get_device_by_identifier.return_value = None
 
         with patch("andersen_ev.dr.async_get", return_value=mock_registry):
             listener = _make_stale_device_listener(hass, coordinator)

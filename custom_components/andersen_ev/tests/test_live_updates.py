@@ -29,7 +29,7 @@ class _Harness:
     """A coordinator built without DataUpdateCoordinator.__init__, with its mocked collaborators."""
 
     def __init__(self) -> None:
-        self.entry = MagicMock()
+        self.entry = MagicMock(entry_id="test_entry_id")
         self.listeners = MagicMock()
         self.coordinator = AndersenEvCoordinator.__new__(AndersenEvCoordinator)
         self.coordinator.devices = []
@@ -413,7 +413,7 @@ DEVICE_INFO = {
 def device_registry() -> Generator[MagicMock]:
     """Stand in for the device registry, holding a registered entry for each charger."""
     registry = MagicMock()
-    registry.async_get_device.return_value = MagicMock(id="registry_id")
+    registry.async_get_device_by_identifier.return_value = MagicMock(id="registry_id")
     with patch("andersen_ev.dr.async_get", return_value=registry):
         yield registry
 
@@ -426,7 +426,9 @@ def test_device_info_change_updates_registry(mock_device: KonnectDevice, device_
 
     harness.coordinator._handle_subscription_payload(mock_device, {"sysFwVersion": "631"})
 
-    device_registry.async_get_device.assert_called_with(identifiers={("andersen_ev", "test_device_123")})
+    device_registry.async_get_device_by_identifier.assert_called_with(
+        ("andersen_ev", "test_device_123"), "test_entry_id"
+    )
     device_registry.async_update_device.assert_called_once_with(
         "registry_id",
         model="A2",
@@ -457,8 +459,8 @@ def test_update_device_registry_skips_unregistered_and_empty(
     mock_device.apply_subscription_update(DEVICE_INFO)
     no_status = KonnectDevice(api=mock_api, device_id="empty", friendly_name="Empty", user_lock=False)
     harness.coordinator.devices = [mock_device, unregistered, no_status]
-    device_registry.async_get_device.side_effect = lambda identifiers: (
-        None if identifiers == {("andersen_ev", "other")} else MagicMock(id=f"registry_{identifiers}")
+    device_registry.async_get_device_by_identifier.side_effect = lambda identifier, config_entry_id: (
+        None if identifier == ("andersen_ev", "other") else MagicMock(id=f"registry_{identifier}")
     )
 
     harness.coordinator.async_update_device_registry()
