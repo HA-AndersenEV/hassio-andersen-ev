@@ -1,8 +1,8 @@
 # Pre-commit hooks mirroring the CI lint job (.github/workflows/ci.yml).
-# ruff rev is pinned to match requirements-dev.txt so local == CI.
+# Keep the ruff rev in step with requirements-dev.txt, which CI reads; Dependabot updates both.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.17.1
     hooks:
       - id: ruff
         name: ruff check
