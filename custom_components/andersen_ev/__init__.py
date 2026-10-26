@@ -142,6 +142,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AndersenEvConfigEntry) 
 class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
     """Data update coordinator for Andersen EV."""
 
+    config_entry: AndersenEvConfigEntry
+
     def __init__(self, hass: HomeAssistant, entry: AndersenEvConfigEntry, client: KonnectClient) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -342,9 +344,11 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
     def _update_device_registry_entry(self, device: KonnectDevice) -> None:
         # Before the platforms are set up the device isn't registered yet; its entities fill it in then.
         device_registry = dr.async_get(self.hass)
-        if (device_entry := device_registry.async_get_device(identifiers={(DOMAIN, device.device_id)})) and (
-            info := device_info_from_status(device.live_status)
-        ):
+        if (
+            device_entry := device_registry.async_get_device_by_identifier(
+                (DOMAIN, device.device_id), self.config_entry.entry_id
+            )
+        ) and (info := device_info_from_status(device.live_status)):
             device_registry.async_update_device(device_entry.id, **info)
 
     def _mark_disconnected(self, device: KonnectDevice) -> None:
@@ -416,7 +420,9 @@ def _make_stale_device_listener(hass: HomeAssistant, coordinator: AndersenEvCoor
     def _handle_stale_devices() -> None:
         current_device_ids = {device.device_id for device in coordinator.data}
         for device_id in known_device_ids - current_device_ids:
-            if device_entry := device_registry.async_get_device(identifiers={(DOMAIN, device_id)}):
+            if device_entry := device_registry.async_get_device_by_identifier(
+                (DOMAIN, device_id), coordinator.config_entry.entry_id
+            ):
                 device_registry.async_remove_device(device_entry.id)
         known_device_ids.clear()
         known_device_ids.update(current_device_ids)
