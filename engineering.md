@@ -392,7 +392,7 @@ The badge (`DeviceConnectionStatus`) is not a direct map of the state. It also t
 
 The `charge_status` sensor (`charge_status.py`) replicates both functions in full, with these differences:
 
-- When `sysPlugged` is false, the badge shows UNPLUGGED instead of SCHEDULED or WAITING FOR SOLAR. With `evseState` 255 the charger doesn't otherwise show whether a car is plugged in, so the app shows WAITING FOR SOLAR for an unplugged charger while solar current is low.
+- When `sysPlugged` is false, the badge shows UNPLUGGED instead of STOPPED, SCHEDULED or WAITING FOR SOLAR, since nothing can charge without a car. OFFLINE, LOCKED, ERROR, CHARGING and CONNECTED still show. With `evseState` 255 the charger doesn't otherwise show whether a car is plugged in, so the app shows WAITING FOR SOLAR for an unplugged charger while solar current is low.
 - Times are Home Assistant's local time rather than the phone's.
 - A missing or unreadable `lastEvent` skips the age check. In the app, `null` gives an age since 1970 and so `OFFLINE`.
 - `sysKaluzaSch0`–`9` were added to the integration's `deviceStatusUpdated` subscription (the app's subscription requests them too). The REST `info` fields come from the 60 s `getDevice` poll.

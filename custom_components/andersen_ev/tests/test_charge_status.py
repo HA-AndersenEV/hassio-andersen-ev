@@ -168,8 +168,15 @@ def test_smart_tariff(info: dict[str, Any], status: dict[str, Any], expected: st
         pytest.param(LOCKED, {}, "locked", id="locked"),
         pytest.param(SCHEDULED, {"sysPlugged": True}, "scheduled", id="scheduled"),
         pytest.param(SCHEDULED, {"sysPlugged": False}, "unplugged", id="scheduled_unplugged"),
+        pytest.param(
+            SCHEDULED, {"sysPlugged": False, "sysForceStop": True}, "unplugged", id="scheduled_stopped_unplugged"
+        ),
         pytest.param(PAUSED, {"sysPlugged": True}, "waiting_for_solar", id="paused"),
         pytest.param(PAUSED, {}, "unplugged", id="paused_unplugged"),
+        pytest.param(PAUSED, {"sysForceStop": True}, "unplugged", id="paused_stopped_unplugged"),
+        pytest.param(DISABLED, {"sysPlugged": False, "sysForceStop": True}, "unplugged", id="stopped_unplugged"),
+        pytest.param(LOCKED, {"sysPlugged": False}, "locked", id="locked_unplugged"),
+        pytest.param(OFFLINE, {"sysPlugged": False}, "offline", id="offline_unplugged"),
         pytest.param(FAULT, {"sysPlugged": False}, "error", id="fault_unplugged"),
         pytest.param(FAULT, {}, "error", id="fault"),
         pytest.param(OFFLINE, {}, "offline", id="offline"),
