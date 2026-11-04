@@ -2,7 +2,7 @@
 # Keep the ruff rev in step with requirements-dev.txt, which CI reads; Dependabot updates both.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.1
+    rev: v0.17.3
     hooks:
       - id: ruff
         name: ruff check
