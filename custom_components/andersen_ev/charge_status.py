@@ -51,6 +51,10 @@ STATE_BADGES = {
     FAULT: "error",
 }
 
+# Badges that still show when unplugged. Offline makes sysPlugged stale, and charging or connected
+# come from evseState, which is more reliable than sysPlugged.
+UNPLUGGED_KEEPS_BADGE = {OFFLINE, LOCKED, FAULT, CHARGING, CONNECTED}
+
 EVSE_STATES = {0: STARTING, 1: STANDBY, 2: CONNECTED, 3: CHARGING}
 EVSE_STATE_DISABLED = 255
 
@@ -205,9 +209,12 @@ def calculate_charge_state(status: Mapping[str, Any], info: Mapping[str, Any], n
 
 
 def charge_status_badge(charge_state: str, status: Mapping[str, Any]) -> str:
-    """Return the badge the app shows for a charge state, as one of CHARGE_STATUS_OPTIONS."""
+    """Return the badge the app shows for a charge state, as one of CHARGE_STATUS_OPTIONS.
+
+    Unlike the app, an unplugged charger shows unplugged rather than stopped, scheduled or waiting for solar.
+    """
+    if not status.get("sysPlugged") and charge_state not in UNPLUGGED_KEEPS_BADGE:
+        return "unplugged"
     if badge := STATE_BADGES.get(charge_state):
         return badge
-    if status.get("sysForceStop"):
-        return "stopped"
-    return "connected" if status.get("sysPlugged") else "unplugged"
+    return "stopped" if status.get("sysForceStop") else "connected"
