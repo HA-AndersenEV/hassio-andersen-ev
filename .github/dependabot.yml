@@ -1,28 +1,43 @@
 version: 2
+
+# ruff is pinned in both requirements-dev.txt and pre-commit, so bump them together.
+multi-ecosystem-groups:
+  python-tooling:
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci"
     groups:
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "pip"
     directory: "/"
-    schedule:
-      interval: "weekly"
-    commit-message:
-      prefix: "chore"
-      include: "scope"
+    multi-ecosystem-group: "python-tooling"
+    patterns:
+      - "*"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "pre-commit"
     directory: "/"
-    schedule:
-      interval: "weekly"
-    commit-message:
-      prefix: "chore"
-      include: "scope"
+    multi-ecosystem-group: "python-tooling"
+    patterns:
+      - "*"
+    cooldown:
+      default-days: 7
