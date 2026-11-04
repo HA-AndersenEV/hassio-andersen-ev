@@ -205,9 +205,15 @@ def calculate_charge_state(status: Mapping[str, Any], info: Mapping[str, Any], n
 
 
 def charge_status_badge(charge_state: str, status: Mapping[str, Any]) -> str:
-    """Return the badge the app shows for a charge state, as one of CHARGE_STATUS_OPTIONS."""
+    """Return the badge the app shows for a charge state, as one of CHARGE_STATUS_OPTIONS.
+
+    Unlike the app, an unplugged charger shows unplugged rather than scheduled or waiting for solar.
+    """
+    plugged = bool(status.get("sysPlugged"))
+    if charge_state in (SCHEDULED, PAUSED) and not plugged:
+        return "unplugged"
     if badge := STATE_BADGES.get(charge_state):
         return badge
     if status.get("sysForceStop"):
         return "stopped"
-    return "connected" if status.get("sysPlugged") else "unplugged"
+    return "connected" if plugged else "unplugged"
