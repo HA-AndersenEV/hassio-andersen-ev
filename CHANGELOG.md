@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.16.0...v0.16.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* show unplugged when no car is connected ([#157](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/157)) ([e5cbc72](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/e5cbc729b84d11ca6994554b06f3afbec273218a))
+
 ## [0.16.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.15.0...v0.16.0) (2026-10-25)
 
 
