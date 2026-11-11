@@ -1,8 +1,9 @@
 """Sensor platform for Andersen EV."""
 
 import logging
-from datetime import datetime
-from typing import Any
+from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any, Self
 
 import dateutil.parser
 from homeassistant.components.sensor import (
@@ -17,9 +18,11 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -27,6 +30,7 @@ from . import AndersenEvConfigEntry, AndersenEvCoordinator
 from .charge_status import CHARGE_STATUS_OPTIONS, calculate_charge_state, charge_status_badge
 from .const import DOMAIN
 from .entity import AndersenEvDeviceInfoMixin, live_status_available
+from .konnect.device import KonnectDevice
 
 PARALLEL_UPDATES = 0
 
@@ -42,6 +46,9 @@ CONNECTOR_STATE_OPTIONS = [
     "Unplugged",
     "unknown",
 ]
+
+# REST getDevice info field, in Wh.
+LIFETIME_ENERGY_FIELD = "lifetimeEnergyDelivered"
 
 
 async def async_setup_entry(
@@ -242,6 +249,10 @@ def _build_entities_for_device(coordinator: AndersenEvCoordinator, device) -> li
         )
     )
     entities.append(AndersenEvSolarPowerSensor(coordinator, device))
+
+    # Energy totals from the REST getDevice poll
+    entities.append(AndersenEvLifetimeEnergySensor(coordinator, device))
+    entities.append(AndersenEvDailyEnergySensor(coordinator, device))
 
     # Realtime charge status sensors - energy
     entities.append(
@@ -701,3 +712,149 @@ class AndersenEvSolarPowerSensor(AndersenEvLiveSensor):
         if not status.get("sysSolarCT") or (kilowatts := status.get("sysSolarPower")) is None:
             return None
         return round(kilowatts * 1000, 1)
+
+
+def _lifetime_energy_wh(device: KonnectDevice) -> float | None:
+    """Return the lifetime energy delivered from the last REST getDevice poll, in Wh."""
+    value = device.last_rest_info.get(LIFETIME_ENERGY_FIELD)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _wh_to_kwh(value: float) -> float:
+    return round(value / 1000, 1)
+
+
+class AndersenEvRestEnergySensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[AndersenEvCoordinator], SensorEntity):
+    """Base for energy sensors read from the polled REST lifetime energy total."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: AndersenEvCoordinator, device: KonnectDevice, sensor_type: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._device = device
+        self._attr_translation_key = sensor_type
+        self._attr_unique_id = f"{device.device_id}_{sensor_type}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device.device_id)},
+            name=device.friendly_name,
+            manufacturer="Andersen EV",
+            serial_number=f"{device.device_id}",
+        )
+        self._update_device_info_from_status()
+
+    @property
+    def available(self) -> bool:
+        """Return if the sensor is available."""
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.rest_available(self._device.device_id)
+            and _lifetime_energy_wh(self._device) is not None
+        )
+
+
+class AndersenEvLifetimeEnergySensor(AndersenEvRestEnergySensor):
+    """Total energy the charger has delivered over its lifetime."""
+
+    def __init__(self, coordinator: AndersenEvCoordinator, device: KonnectDevice) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device, "lifetime_energy")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the lifetime energy in kWh."""
+        if (lifetime := _lifetime_energy_wh(self._device)) is None:
+            return None
+        return _wh_to_kwh(lifetime)
+
+
+@dataclass
+class DailyEnergyExtraStoredData(ExtraStoredData):
+    """The day being counted and the lifetime reading it started from, kept across restarts."""
+
+    day: date | None
+    start_wh: float | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a dict representation of the data."""
+        return {"day": self.day.isoformat() if self.day else None, "start_wh": self.start_wh}
+
+    @classmethod
+    def from_dict(cls, restored: dict[str, Any]) -> Self | None:
+        """Build the data from a stored dict, or None if it can't be read."""
+        try:
+            day = date.fromisoformat(restored["day"]) if restored["day"] else None
+            start_wh = float(restored["start_wh"]) if restored["start_wh"] is not None else None
+        except KeyError, TypeError, ValueError:
+            return None
+        return cls(day, start_wh)
+
+
+class AndersenEvDailyEnergySensor(AndersenEvRestEnergySensor, RestoreEntity):
+    """Energy delivered since local midnight, worked out from the lifetime total."""
+
+    def __init__(self, coordinator: AndersenEvCoordinator, device: KonnectDevice) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device, "daily_energy")
+        self._day: date | None = None
+        self._start_wh: float | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the day's starting reading and reset the count at each local midnight."""
+        await super().async_added_to_hass()
+        if (extra := await self.async_get_last_extra_data()) and (
+            restored := DailyEnergyExtraStoredData.from_dict(extra.as_dict())
+        ):
+            self._day = restored.day
+            self._start_wh = restored.start_wh
+        self._roll_over()
+        self.async_on_remove(async_track_time_change(self.hass, self._async_midnight, hour=0, minute=0, second=0))
+
+    @property
+    def extra_restore_state_data(self) -> DailyEnergyExtraStoredData:
+        """Return the data needed to carry on the day's count after a restart."""
+        return DailyEnergyExtraStoredData(self._day, self._start_wh)
+
+    def _roll_over(self) -> None:
+        """Start counting from the latest lifetime reading if the day has changed.
+
+        Energy delivered between the last poll and midnight counts towards the new day. If Home
+        Assistant was stopped over midnight, or the REST data was failing at midnight, counting
+        starts from the first fresh reading after that. A lifetime total that drops (Andersen can
+        recalculate it) also restarts the count.
+        """
+        today = dt_util.now().date()
+        if not self.coordinator.rest_available(self._device.device_id):
+            # The cached reading may be hours old, so using it would count yesterday's energy today.
+            if self._day != today:
+                self._day = today
+                self._start_wh = None
+            return
+        if (lifetime := _lifetime_energy_wh(self._device)) is None:
+            return
+        if self._day != today or self._start_wh is None or lifetime < self._start_wh:
+            self._day = today
+            self._start_wh = lifetime
+
+    @callback
+    def _async_midnight(self, _now: datetime) -> None:
+        self._roll_over()
+        self.async_write_ha_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._roll_over()
+        super()._handle_coordinator_update()
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the energy delivered today in kWh."""
+        if (lifetime := _lifetime_energy_wh(self._device)) is None or self._start_wh is None:
+            return None
+        return _wh_to_kwh(lifetime - self._start_wh)

@@ -391,6 +391,10 @@ class AndersenEvCoordinator(DataUpdateCoordinator[list[KonnectDevice]]):
             self.hass, LIVE_STATUS_TIMEOUT.total_seconds(), _timed_out
         )
 
+    def rest_available(self, device_id: str) -> bool:
+        """Return False while the device's REST data is failing to refresh, so its cached copy is stale."""
+        return device_id not in self._rest_failing
+
     async def _update_user_device(self, device: KonnectDevice) -> None:
         """Refresh the device's REST data, keeping the cached copy if the call fails."""
         try:

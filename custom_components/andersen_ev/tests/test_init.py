@@ -276,7 +276,7 @@ class TestAsyncUpdateData:
         device.get_last_charge.assert_awaited()
         warnings = [r for r in caplog.records if "Failed to fetch REST device data" in r.getMessage()]
         assert len(warnings) == 1
-        assert device.device_id in coordinator._rest_failing
+        assert coordinator.rest_available(device.device_id) is False
 
     @pytest.mark.asyncio
     async def test_rest_recovery_clears_failure(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -290,7 +290,7 @@ class TestAsyncUpdateData:
         with caplog.at_level(logging.INFO):
             await coordinator._async_update_data()
 
-        assert device.device_id not in coordinator._rest_failing
+        assert coordinator.rest_available(device.device_id) is True
         assert "REST device data for Device is available again" in caplog.text
 
 

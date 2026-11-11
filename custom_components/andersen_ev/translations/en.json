@@ -72,7 +72,9 @@
       "current_charge_energy": { "name": "Current Session Energy" },
       "current_solar_energy": { "name": "Current Session Solar Energy" },
       "current_grid_energy": { "name": "Current Session Grid Energy" },
-      "session_start": { "name": "Session Start Time" }
+      "session_start": { "name": "Session Start Time" },
+      "lifetime_energy": { "name": "Lifetime Energy" },
+      "daily_energy": { "name": "Daily Energy" }
     },
     "switch": {
       "schedule": { "name": "Schedule {index}" },
