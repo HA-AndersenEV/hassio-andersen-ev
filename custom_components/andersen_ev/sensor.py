@@ -43,6 +43,7 @@ CONNECTOR_STATE_OPTIONS = [
     "Error",
     "Sleeping",
     "Disabled",
+    "Unplugged",
     "unknown",
 ]
 
@@ -483,6 +484,10 @@ class AndersenEvConnectorSensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[And
                     # Log unknown states for debugging
                     _LOGGER.debug("Unknown EVSE state: %s for %s", evse_state, self._device.friendly_name)
                     self._connector_state = "unknown"
+
+                # Disabled and sleeping don't say whether a car is plugged in, so check sysPlugged.
+                if self._connector_state in ("Disabled", "Sleeping") and status.get("sysPlugged") is False:
+                    self._connector_state = "Unplugged"
 
         return self._connector_state
 
