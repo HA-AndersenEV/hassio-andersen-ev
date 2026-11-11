@@ -36,7 +36,9 @@
       "current_charge_energy": { "default": "mdi:car-electric" },
       "current_solar_energy": { "default": "mdi:solar-power-variant" },
       "current_grid_energy": { "default": "mdi:power-plug" },
-      "session_start": { "default": "mdi:clock-start" }
+      "session_start": { "default": "mdi:clock-start" },
+      "lifetime_energy": { "default": "mdi:counter" },
+      "daily_energy": { "default": "mdi:calendar-today" }
     },
     "button": {
       "charge_now": { "default": "mdi:ev-station" },

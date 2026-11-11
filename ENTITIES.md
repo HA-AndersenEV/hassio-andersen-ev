@@ -39,6 +39,8 @@ Unique IDs are `<device id>_<suffix>`, using the suffix in the Entity column. En
 | Grid Energy (`grid_energy`) | Sensor, energy (kWh), total | GraphQL query, every 60 s | `getDeviceCalculatedChargeLogs[0].gridEnergyTotal` | — | Last completed session. Includes the rest of the house's grid import, so it can exceed Total Energy |
 | Solar Energy (`solar_energy`) | Sensor, energy (kWh), total | GraphQL query, every 60 s | `getDeviceCalculatedChargeLogs[0].solarEnergyTotal` | — | Last completed session |
 | Surplus Energy (`surplus_energy`) | Sensor, energy (kWh), total | GraphQL query, every 60 s | `getDeviceCalculatedChargeLogs[0].surplusUsedEnergyTotal` | — | Last completed session |
+| Lifetime Energy (`lifetime_energy`) | Sensor, energy (kWh), total increasing | HTTP GET, every 60 s | REST `info.lifetimeEnergyDelivered` (Wh, shown in kWh to 1 decimal place) | — | Total energy the charger has delivered. Suitable for the Energy dashboard. Unavailable until the first REST poll returns it |
+| Daily Energy (`daily_energy`) | Sensor, energy (kWh), total increasing | HTTP GET, every 60 s | REST `info.lifetimeEnergyDelivered` | — | Energy delivered since local midnight, worked out from Lifetime Energy and reset to 0 at midnight. Kept across restarts on the same day. Up to 60 s of energy from just before midnight counts towards the new day, and if Home Assistant was stopped over midnight the count starts from the first poll after it starts. A drop in the lifetime total also restarts the count |
 | Total Cost (`cost`) | Sensor, monetary | GraphQL query, every 60 s | `getDeviceCalculatedChargeLogs[0].chargeCostTotal` | — | Currency from `getDevice.deviceInfo.currency`, read once at startup; GBP until known |
 | Grid Cost (`grid_cost`) | Sensor, monetary | GraphQL query, every 60 s | `getDeviceCalculatedChargeLogs[0].gridCostTotal` | — | As Total Cost |
 | Solar Cost (`solar_cost`) | Sensor, monetary | GraphQL query, every 60 s | `getDeviceCalculatedChargeLogs[0].solarCostTotal` | — | As Total Cost |
@@ -92,5 +94,5 @@ overwrites one set in the app. `readOnly` is true for slots 0 and 1.
 | `deviceStatusUpdated` | GraphQL subscription | Kept open; reconnects after 5 s, backing off to 5 minutes | Every entity marked GraphQL subscription above |
 | `getDevices` | HTTP GET | Every 60 s | List of chargers on the account, and their names |
 | `getDeviceCalculatedChargeLogs` | GraphQL query | Every 60 s | Last-session energy and cost sensors |
-| `getDevice` | HTTP GET | Every 60 s | Fetched for future use; no entity reads it |
+| `getDevice` | HTTP GET | Every 60 s | Charge status, Lifetime Energy and Daily Energy sensors |
 | `getDevice` | GraphQL query | Once at startup | Schedule slots and names, and the cost currency |
