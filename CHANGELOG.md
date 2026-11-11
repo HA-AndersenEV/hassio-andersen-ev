@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.16.1...v0.17.0) (2026-11-11)
+
+
+### Features
+
+* add lifetime and daily energy sensors ([#161](https://github.com/HA-AndersenEV/hassio-andersen-ev/issues/161)) ([f7dfac3](https://github.com/HA-AndersenEV/hassio-andersen-ev/commit/f7dfac3edf52831163199f2635d267d133914263))
+
 ## [0.16.1](https://github.com/HA-AndersenEV/hassio-andersen-ev/compare/v0.16.0...v0.16.1) (2026-11-04)
 
 
