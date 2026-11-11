@@ -1,12 +1,13 @@
 """Tests for the Andersen EV sensor platform."""
 
-from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import UnitOfEnergy, UnitOfPower
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from andersen_ev.charge_status import CHARGE_STATUS_OPTIONS
@@ -15,9 +16,12 @@ from andersen_ev.sensor import (
     AndersenEvChargeStatusSensor,
     AndersenEvConnectorSensor,
     AndersenEvCostSensor,
+    AndersenEvDailyEnergySensor,
     AndersenEvEnergySensor,
+    AndersenEvLifetimeEnergySensor,
     AndersenEvLiveSensor,
     AndersenEvSolarPowerSensor,
+    DailyEnergyExtraStoredData,
     _build_entities_for_device,
     async_setup_entry,
 )
@@ -53,6 +57,7 @@ def _make_coordinator(devices=None, last_update_success=True):
     coordinator = MagicMock()
     coordinator.data = devices or []
     coordinator.last_update_success = last_update_success
+    coordinator.rest_available.return_value = True
     coordinator.async_request_refresh = AsyncMock()
     return coordinator
 
@@ -72,7 +77,7 @@ class TestAsyncSetupEntry:
         await async_setup_entry(MagicMock(), entry, async_add_entities)
 
         entities = async_add_entities.call_args.args[0]
-        assert len(entities) == 46
+        assert len(entities) == 50
         assert sum(isinstance(e, AndersenEvEnergySensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvCostSensor) for e in entities) == 8
         assert sum(isinstance(e, AndersenEvConnectorSensor) for e in entities) == 2
@@ -80,6 +85,8 @@ class TestAsyncSetupEntry:
         assert sum(isinstance(e, AndersenEvChargeStatusSensor) for e in entities) == 12
         assert sum(isinstance(e, AndersenEvLiveSensor) for e in entities) == 14
         assert sum(isinstance(e, AndersenEvSolarPowerSensor) for e in entities) == 2
+        assert sum(isinstance(e, AndersenEvLifetimeEnergySensor) for e in entities) == 2
+        assert sum(isinstance(e, AndersenEvDailyEnergySensor) for e in entities) == 2
         assert not any(e.unique_id.endswith("_grid_power") and "sys" not in e.unique_id for e in entities)
 
     @pytest.mark.asyncio
@@ -117,7 +124,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 23
+        assert len(new_entities) == 25
         assert all(entity._device.device_id == "device_2" for entity in new_entities)
 
     @pytest.mark.asyncio
@@ -158,7 +165,7 @@ class TestDynamicDevices:
 
         assert async_add_entities.call_count == 2
         new_entities = async_add_entities.call_args.args[0]
-        assert len(new_entities) == 23
+        assert len(new_entities) == 25
         assert all(entity._device.device_id == "device_1" for entity in new_entities)
 
 
@@ -1266,3 +1273,222 @@ class TestSolarPowerSensor:
         sensor = AndersenEvSolarPowerSensor(_make_coordinator([device]), device)
 
         assert sensor.entity_registry_enabled_default is enabled
+
+
+TODAY = date(2026, 11, 11)
+YESTERDAY = date(2026, 11, 10)
+
+
+def _make_rest_energy_device(lifetime_wh: object = None) -> MagicMock:
+    """Build a mock device whose REST info reports lifetime_wh, or nothing when None."""
+    device = _make_device()
+    device.last_rest_info = {} if lifetime_wh is None else {"lifetimeEnergyDelivered": lifetime_wh}
+    return device
+
+
+def _make_daily_sensor(device: MagicMock) -> AndersenEvDailyEnergySensor:
+    return AndersenEvDailyEnergySensor(_make_coordinator([device]), device)
+
+
+@pytest.fixture
+def write_ha_state():
+    """Stub out state writes, as the sensor isn't added to a running Home Assistant."""
+    with patch.object(AndersenEvDailyEnergySensor, "async_write_ha_state") as mock_write:
+        yield mock_write
+
+
+@pytest.fixture
+def local_today():
+    """Pin the local date the daily sensor counts against."""
+    with patch("andersen_ev.sensor.dt_util.now", return_value=datetime(2026, 11, 11, 12, 0, tzinfo=UTC)) as mock_now:
+        yield mock_now
+
+
+class TestLifetimeEnergySensor:
+    """Tests for AndersenEvLifetimeEnergySensor."""
+
+    def test_entity_description(self) -> None:
+        sensor = AndersenEvLifetimeEnergySensor(_make_coordinator(), _make_rest_energy_device())
+
+        assert sensor.unique_id == "device_1_lifetime_energy"
+        assert sensor.translation_key == "lifetime_energy"
+        assert sensor.device_class == SensorDeviceClass.ENERGY
+        assert sensor.state_class == SensorStateClass.TOTAL_INCREASING
+        assert sensor.native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
+
+    @pytest.mark.parametrize(
+        ("lifetime_wh", "expected"),
+        [
+            pytest.param(3015612.602, 3015.6, id="float_wh_to_kwh"),
+            pytest.param(1500, 1.5, id="int_wh_to_kwh"),
+            pytest.param(None, None, id="missing"),
+            pytest.param("3015612.602", None, id="not_a_number"),
+            pytest.param(True, None, id="bool"),
+        ],
+    )
+    def test_native_value(self, lifetime_wh: object, expected: float | None) -> None:
+        sensor = AndersenEvLifetimeEnergySensor(_make_coordinator(), _make_rest_energy_device(lifetime_wh))
+
+        assert sensor.native_value == expected
+
+    @pytest.mark.parametrize(
+        ("lifetime_wh", "last_update_success", "rest_available", "expected"),
+        [
+            pytest.param(1000.0, True, True, True, id="value_present"),
+            pytest.param(None, True, True, False, id="value_missing"),
+            pytest.param(1000.0, False, True, False, id="update_failed"),
+            pytest.param(1000.0, True, False, False, id="rest_failing"),
+        ],
+    )
+    def test_available(
+        self, lifetime_wh: float | None, last_update_success: bool, rest_available: bool, expected: bool
+    ) -> None:
+        device = _make_rest_energy_device(lifetime_wh)
+        coordinator = _make_coordinator([device], last_update_success)
+        coordinator.rest_available.return_value = rest_available
+        sensor = AndersenEvLifetimeEnergySensor(coordinator, device)
+
+        assert sensor.available is expected
+
+
+@pytest.mark.usefixtures("local_today", "write_ha_state")
+class TestDailyEnergySensor:
+    """Tests for AndersenEvDailyEnergySensor."""
+
+    def test_entity_description(self) -> None:
+        sensor = _make_daily_sensor(_make_rest_energy_device())
+
+        assert sensor.unique_id == "device_1_daily_energy"
+        assert sensor.translation_key == "daily_energy"
+        assert sensor.device_class == SensorDeviceClass.ENERGY
+        assert sensor.state_class == SensorStateClass.TOTAL_INCREASING
+        assert sensor.native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
+
+    def test_unknown_until_first_reading(self) -> None:
+        device = _make_rest_energy_device()
+        sensor = _make_daily_sensor(device)
+        sensor._handle_coordinator_update()
+
+        assert sensor.native_value is None
+        assert sensor.available is False
+
+    def test_counts_from_first_reading_of_the_day(self) -> None:
+        device = _make_rest_energy_device(3_000_000.0)
+        sensor = _make_daily_sensor(device)
+        sensor._handle_coordinator_update()
+        assert sensor.native_value == 0.0
+
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_007_250.7}
+        sensor._handle_coordinator_update()
+
+        assert sensor.native_value == 7.3
+        assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(TODAY, 3_000_000.0)
+
+    def test_resets_at_midnight(self, local_today: MagicMock, write_ha_state: MagicMock) -> None:
+        device = _make_rest_energy_device(3_000_000.0)
+        sensor = _make_daily_sensor(device)
+        sensor._handle_coordinator_update()
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_010_000.0}
+        sensor._handle_coordinator_update()
+        assert sensor.native_value == 10.0
+
+        local_today.return_value = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+        sensor._async_midnight(local_today.return_value)
+
+        assert sensor.native_value == 0.0
+        assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(date(2026, 11, 12), 3_010_000.0)
+        write_ha_state.assert_called()
+
+    def test_poll_on_a_new_day_restarts_the_count(self, local_today: MagicMock) -> None:
+        """Covers a midnight missed because the REST data was unavailable then."""
+        device = _make_rest_energy_device(3_000_000.0)
+        sensor = _make_daily_sensor(device)
+        sensor._handle_coordinator_update()
+
+        local_today.return_value = datetime(2026, 11, 12, 0, 1, tzinfo=UTC)
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_010_000.0}
+        sensor._handle_coordinator_update()
+
+        assert sensor.native_value == 0.0
+
+    def test_stale_reading_at_midnight_waits_for_a_fresh_poll(self, local_today: MagicMock) -> None:
+        """A reading cached from before midnight must not become the new day's starting point."""
+        device = _make_rest_energy_device(3_000_000.0)
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvDailyEnergySensor(coordinator, device)
+        sensor._handle_coordinator_update()
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_005_000.0}
+        sensor._handle_coordinator_update()
+        coordinator.rest_available.return_value = False
+
+        local_today.return_value = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+        sensor._async_midnight(local_today.return_value)
+
+        assert sensor.available is False
+        assert sensor.native_value is None
+        assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(date(2026, 11, 12), None)
+
+        coordinator.rest_available.return_value = True
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_020_000.0}
+        sensor._handle_coordinator_update()
+        assert sensor.native_value == 0.0
+
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_022_000.0}
+        sensor._handle_coordinator_update()
+        assert sensor.native_value == 2.0
+
+    def test_lifetime_drop_restarts_the_count(self) -> None:
+        """Andersen can recalculate the lifetime total, which may lower it."""
+        device = _make_rest_energy_device(3_000_000.0)
+        sensor = _make_daily_sensor(device)
+        sensor._handle_coordinator_update()
+
+        device.last_rest_info = {"lifetimeEnergyDelivered": 2_900_000.0}
+        sensor._handle_coordinator_update()
+
+        assert sensor.native_value == 0.0
+        assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(TODAY, 2_900_000.0)
+
+    @pytest.mark.parametrize(
+        ("restored", "expected"),
+        [
+            pytest.param({"day": "2026-11-11", "start_wh": 3_000_000.0}, 5.0, id="same_day_continues"),
+            pytest.param({"day": "2026-11-10", "start_wh": 3_000_000.0}, 0.0, id="previous_day_restarts"),
+            pytest.param(None, 0.0, id="nothing_stored"),
+        ],
+    )
+    async def test_restore_after_restart(self, restored: dict | None, expected: float) -> None:
+        device = _make_rest_energy_device(3_005_000.0)
+        sensor = _make_daily_sensor(device)
+        extra = None if restored is None else DailyEnergyExtraStoredData.from_dict(restored)
+
+        with (
+            patch.object(CoordinatorEntity, "async_added_to_hass", AsyncMock()),
+            patch.object(sensor, "async_get_last_extra_data", AsyncMock(return_value=extra)),
+            patch("andersen_ev.sensor.async_track_time_change") as mock_track,
+        ):
+            sensor.hass = MagicMock()
+            await sensor.async_added_to_hass()
+
+        assert sensor.native_value == expected
+        assert mock_track.call_args.kwargs == {"hour": 0, "minute": 0, "second": 0}
+
+
+class TestDailyEnergyExtraStoredData:
+    """Tests for DailyEnergyExtraStoredData."""
+
+    def test_round_trip(self) -> None:
+        data = DailyEnergyExtraStoredData(YESTERDAY, 1234.5)
+
+        assert DailyEnergyExtraStoredData.from_dict(data.as_dict()) == data
+
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            pytest.param({}, id="empty"),
+            pytest.param({"day": "not a date", "start_wh": 1.0}, id="bad_day"),
+            pytest.param({"day": "2026-11-11", "start_wh": "x"}, id="bad_start"),
+        ],
+    )
+    def test_from_dict_rejects_unreadable_data(self, stored: dict) -> None:
+        assert DailyEnergyExtraStoredData.from_dict(stored) is None

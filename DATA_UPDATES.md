@@ -9,7 +9,7 @@ being up are both required for entities to update or for services/lock actions t
 for each charger, and the charger's status arrives as soon as it changes: every few seconds while
 charging, and anywhere from a few seconds to a few minutes while idle. Almost every entity reads
 from it: the lock, switches, numbers, buttons, device information, and every sensor except the
-last-session energy and cost sensors.
+last-session energy and cost sensors and the Lifetime and Daily Energy sensors.
 
 * After Home Assistant starts, these entities show `unknown` until the first live update, which
   normally arrives within a second.
@@ -29,7 +29,7 @@ last-session energy and cost sensors.
 |---|---|
 | Charge history (GraphQL `getDeviceCalculatedChargeLogs`) | The last-session energy and cost sensors: Total, Grid, Solar and Surplus Energy, and Total, Grid, Solar and Surplus Cost |
 | Charger list (REST `getDevices`) | Finding chargers added to or removed from the account |
-| Device settings (REST `getDevice`) | Fetched, but not currently used by any entity |
+| Device settings (REST `getDevice`) | The Lifetime Energy and Daily Energy sensors, and part of the Charge status sensor |
 
 The schedule names and the cost currency are read once at startup.
 
