@@ -574,6 +574,21 @@ class TestConnectorSensorNativeValue:
 
         assert sensor.native_value == expected
 
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            pytest.param({"evseState": 255, "sysPlugged": False}, "Unplugged", id="disabled_unplugged"),
+            pytest.param({"evseState": 254, "sysPlugged": False}, "Unplugged", id="sleeping_unplugged"),
+            pytest.param({"evseState": 255, "sysPlugged": True}, "Disabled", id="disabled_plugged"),
+            pytest.param({"evseState": 3, "sysPlugged": False}, "Charging", id="charging_ignores_plug"),
+        ],
+    )
+    def test_plug_state(self, status: dict, expected: str) -> None:
+        device = _make_device(live_status=status)
+        sensor = AndersenEvConnectorSensor(_make_coordinator([device]), device)
+
+        assert sensor.native_value == expected
+
     def test_no_status_returns_default_unknown(self):
         device = _make_device(live_status=None)
         coordinator = _make_coordinator([device])
