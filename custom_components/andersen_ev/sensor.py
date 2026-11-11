@@ -752,7 +752,11 @@ class AndersenEvRestEnergySensor(AndersenEvDeviceInfoMixin, CoordinatorEntity[An
     @property
     def available(self) -> bool:
         """Return if the sensor is available."""
-        return self.coordinator.last_update_success and _lifetime_energy_wh(self._device) is not None
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.rest_available(self._device.device_id)
+            and _lifetime_energy_wh(self._device) is not None
+        )
 
 
 class AndersenEvLifetimeEnergySensor(AndersenEvRestEnergySensor):
@@ -821,12 +825,19 @@ class AndersenEvDailyEnergySensor(AndersenEvRestEnergySensor, RestoreEntity):
         """Start counting from the latest lifetime reading if the day has changed.
 
         Energy delivered between the last poll and midnight counts towards the new day. If Home
-        Assistant was stopped over midnight, counting starts from the first reading after it starts.
-        A lifetime total that drops (Andersen can recalculate it) also restarts the count.
+        Assistant was stopped over midnight, or the REST data was failing at midnight, counting
+        starts from the first fresh reading after that. A lifetime total that drops (Andersen can
+        recalculate it) also restarts the count.
         """
+        today = dt_util.now().date()
+        if not self.coordinator.rest_available(self._device.device_id):
+            # The cached reading may be hours old, so using it would count yesterday's energy today.
+            if self._day != today:
+                self._day = today
+                self._start_wh = None
+            return
         if (lifetime := _lifetime_energy_wh(self._device)) is None:
             return
-        today = dt_util.now().date()
         if self._day != today or self._start_wh is None or lifetime < self._start_wh:
             self._day = today
             self._start_wh = lifetime

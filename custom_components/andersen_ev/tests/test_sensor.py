@@ -57,6 +57,7 @@ def _make_coordinator(devices=None, last_update_success=True):
     coordinator = MagicMock()
     coordinator.data = devices or []
     coordinator.last_update_success = last_update_success
+    coordinator.rest_available.return_value = True
     coordinator.async_request_refresh = AsyncMock()
     return coordinator
 
@@ -1331,16 +1332,21 @@ class TestLifetimeEnergySensor:
         assert sensor.native_value == expected
 
     @pytest.mark.parametrize(
-        ("lifetime_wh", "last_update_success", "expected"),
+        ("lifetime_wh", "last_update_success", "rest_available", "expected"),
         [
-            pytest.param(1000.0, True, True, id="value_present"),
-            pytest.param(None, True, False, id="value_missing"),
-            pytest.param(1000.0, False, False, id="update_failed"),
+            pytest.param(1000.0, True, True, True, id="value_present"),
+            pytest.param(None, True, True, False, id="value_missing"),
+            pytest.param(1000.0, False, True, False, id="update_failed"),
+            pytest.param(1000.0, True, False, False, id="rest_failing"),
         ],
     )
-    def test_available(self, lifetime_wh: float | None, last_update_success: bool, expected: bool) -> None:
+    def test_available(
+        self, lifetime_wh: float | None, last_update_success: bool, rest_available: bool, expected: bool
+    ) -> None:
         device = _make_rest_energy_device(lifetime_wh)
-        sensor = AndersenEvLifetimeEnergySensor(_make_coordinator([device], last_update_success), device)
+        coordinator = _make_coordinator([device], last_update_success)
+        coordinator.rest_available.return_value = rest_available
+        sensor = AndersenEvLifetimeEnergySensor(coordinator, device)
 
         assert sensor.available is expected
 
@@ -1404,6 +1410,32 @@ class TestDailyEnergySensor:
         sensor._handle_coordinator_update()
 
         assert sensor.native_value == 0.0
+
+    def test_stale_reading_at_midnight_waits_for_a_fresh_poll(self, local_today: MagicMock) -> None:
+        """A reading cached from before midnight must not become the new day's starting point."""
+        device = _make_rest_energy_device(3_000_000.0)
+        coordinator = _make_coordinator([device])
+        sensor = AndersenEvDailyEnergySensor(coordinator, device)
+        sensor._handle_coordinator_update()
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_005_000.0}
+        sensor._handle_coordinator_update()
+        coordinator.rest_available.return_value = False
+
+        local_today.return_value = datetime(2026, 11, 12, 0, 0, tzinfo=UTC)
+        sensor._async_midnight(local_today.return_value)
+
+        assert sensor.available is False
+        assert sensor.native_value is None
+        assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(date(2026, 11, 12), None)
+
+        coordinator.rest_available.return_value = True
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_020_000.0}
+        sensor._handle_coordinator_update()
+        assert sensor.native_value == 0.0
+
+        device.last_rest_info = {"lifetimeEnergyDelivered": 3_022_000.0}
+        sensor._handle_coordinator_update()
+        assert sensor.native_value == 2.0
 
     def test_lifetime_drop_restarts_the_count(self) -> None:
         """Andersen can recalculate the lifetime total, which may lower it."""
