@@ -1271,9 +1271,14 @@ def _make_rest_energy_device(lifetime_wh: object = None) -> MagicMock:
 
 
 def _make_daily_sensor(device: MagicMock) -> AndersenEvDailyEnergySensor:
-    sensor = AndersenEvDailyEnergySensor(_make_coordinator([device]), device)
-    sensor.async_write_ha_state = MagicMock()
-    return sensor
+    return AndersenEvDailyEnergySensor(_make_coordinator([device]), device)
+
+
+@pytest.fixture
+def write_ha_state():
+    """Stub out state writes, as the sensor isn't added to a running Home Assistant."""
+    with patch.object(AndersenEvDailyEnergySensor, "async_write_ha_state") as mock_write:
+        yield mock_write
 
 
 @pytest.fixture
@@ -1325,7 +1330,7 @@ class TestLifetimeEnergySensor:
         assert sensor.available is expected
 
 
-@pytest.mark.usefixtures("local_today")
+@pytest.mark.usefixtures("local_today", "write_ha_state")
 class TestDailyEnergySensor:
     """Tests for AndersenEvDailyEnergySensor."""
 
@@ -1358,7 +1363,7 @@ class TestDailyEnergySensor:
         assert sensor.native_value == 7.3
         assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(TODAY, 3_000_000.0)
 
-    def test_resets_at_midnight(self, local_today: MagicMock) -> None:
+    def test_resets_at_midnight(self, local_today: MagicMock, write_ha_state: MagicMock) -> None:
         device = _make_rest_energy_device(3_000_000.0)
         sensor = _make_daily_sensor(device)
         sensor._handle_coordinator_update()
@@ -1371,7 +1376,7 @@ class TestDailyEnergySensor:
 
         assert sensor.native_value == 0.0
         assert sensor.extra_restore_state_data == DailyEnergyExtraStoredData(date(2026, 11, 12), 3_010_000.0)
-        sensor.async_write_ha_state.assert_called()
+        write_ha_state.assert_called()
 
     def test_poll_on_a_new_day_restarts_the_count(self, local_today: MagicMock) -> None:
         """Covers a midnight missed because the REST data was unavailable then."""
